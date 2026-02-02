@@ -1,0 +1,93 @@
+# .github/workflows/publish_to_cnblogs.yml
+# 已存档：改为手动执行脚本同步
+
+name: Publish to Cnblogs on PR
+
+on:
+  # 1. 触发器修改：当有 Pull Request 指向 main 分支时触发
+  # 移除了 paths 限制，确保任何 PR 都会触发以方便调试
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # 作业一：找出仓库中所有的 .md 文件，并将其输出为 JSON 格式
+  find-all-files: # 作业名修改以反映新功能
+    runs-on: ubuntu-latest
+    outputs:
+      files: ${{ steps.find-files.outputs.files }} # 对应下面的 id
+
+    steps:
+      # 检出代码是必须的
+      - name: Checkout repository
+        uses: actions/checkout@v3 # 保持您指定的 v3 版本
+
+      - name: Get all markdown files
+        id: find-files # id 修改以反映新功能
+        run: |
+          git config --global core.quotepath false
+          
+          # 2. 核心修改：不再使用 git diff，而是使用 find 命令查找所有 .md 文件
+          FILES_LIST=$(find . -type f -name '*.md')
+          
+          if [ -z "$FILES_LIST" ]; then
+            echo "No markdown files found in the repository."
+            echo "files=[]" >> $GITHUB_OUTPUT
+          else
+            echo "All markdown files found in the repository:"
+            echo "$FILES_LIST"
+          
+            # 您脚本中包含兼容性修复的 JSON 构建逻辑被完整保留
+            JSON_ARRAY="["
+            FIRST=true
+            while IFS= read -r line; do
+              if [ -z "$line" ]; then continue; fi
+              # 新增：移除 find 命令可能产生的前导 './'
+              CLEANED_LINE=$(echo "$line" | sed 's|^\./||')
+              ESCAPED_LINE=$(echo "$CLEANED_LINE" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
+          
+              if [ "$FIRST" = false ]; then
+                JSON_ARRAY="$JSON_ARRAY,"
+              fi
+              JSON_ARRAY="$JSON_ARRAY\"$ESCAPED_LINE\""
+              FIRST=false
+            done <<< "$FILES_LIST"
+            JSON_ARRAY="$JSON_ARRAY]"
+          
+            echo "Generated JSON: $JSON_ARRAY"
+            echo "files=$JSON_ARRAY" >> $GITHUB_OUTPUT
+          fi
+
+  # 作业二：根据上一步的文件列表，为每个文件执行发布脚本
+  publish-files:
+    # 3. 更新依赖作业的名称
+    needs: find-all-files
+    if: ${{ needs.find-all-files.outputs.files != '[]' }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      # 4. 更新 fromJSON 的来源
+      matrix:
+        file: ${{ fromJSON(needs.find-all-files.outputs.files) }}
+
+    steps:
+      # 5. 明确检出 PR 的 head 分支，确保运行的是源分支的最新代码
+      - name: Checkout repository
+        uses: actions/checkout@v3 # 保持您指定的 v3 版本
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Publish '${{ matrix.file }}' to Cnblogs
+        env:
+          CNBLOGS_RPC_URL: ${{ secrets.CNBLOGS_RPC_URL }}
+          CNBLOGS_BLOG_ID: ${{ secrets.CNBLOGS_BLOG_ID }}
+          CNBLOGS_USERNAME: ${{ secrets.CNBLOGS_USERNAME }}
+          CNBLOGS_PASSWORD: ${{ secrets.CNBLOGS_PASSWORD }}
+        run: |
+          python scripts/sync_to_cnblogs.py "${{ matrix.file }}"
+

@@ -1,0 +1,96 @@
+
+
+下面是上一条英文总结的中文版本，便于你直接贴到新仓库：
+
+Context Summary（用于粘贴到新仓库）
+
+目标
+在 Zeabur 上实现 CNBlogs 每小时自动同步：全仓库范围、增量同步，并将同步状态持久化到专用 Git 分支（sync-state），避免外部数据库。因为主仓库约 466MB，按小时全量克隆过重，所以拆出一个小型 sync‑worker 仓库，运行时浅克隆主仓库。
+
+已完成内容
+
+主仓库脚本增强（sync_to_cnblogs.py）
+
+基于 last_synced_commit 与 HEAD 的 git diff 做增量同步。
+增加 state.json 记录（最后提交、运行时间、统计）。
+Git 分支持久化：通过 worktree 读写 sync-state 分支中的 .cnblogs_sync_record.json + state.json。
+支持外部仓库根目录与自定义记录/状态路径：
+SYNC_REPO_ROOT
+SYNC_RECORD_PATH
+SYNC_STATE_PATH
+新增配置/环境变量：
+INCREMENTAL_SYNC
+SYNC_STATE_GIT
+SYNC_STATE_BRANCH
+SYNC_STATE_REMOTE
+SYNC_STATE_REMOTE_URL
+本地已创建 worker 仓库
+路径：/home/q/Desktop/START/repos/Daily (妙蛙种子)/cnblogs-sync-worker
+内容：
+
+run_sync_worker.sh（入口脚本）
+requirements.txt（python‑dotenv）
+README.md（环境变量与流程说明）
+Worker 脚本行为
+
+浅克隆主仓库：
+git clone --depth=1 --branch $SYNC_REPO_BRANCH $SYNC_REPO_URL $WORKDIR
+可选依赖安装（INSTALL_DEPS=true 默认）
+运行主仓库中的 sync_to_cnblogs.py
+Zeabur 需要的环境变量
+
+CNBlogs：
+
+CNBLOGS_RPC_URL
+CNBLOGS_BLOG_ID
+CNBLOGS_USERNAME
+CNBLOGS_PASSWORD
+同步相关：
+
+SYNC_REPO_URL（主仓库 PAT 地址）
+SYNC_REPO_BRANCH=main
+SYNC_STATE_GIT=true
+SYNC_STATE_BRANCH=sync-state
+SYNC_STATE_REMOTE=origin
+SYNC_STATE_REMOTE_URL（PAT 用于推送）
+INCREMENTAL_SYNC=true
+可选：
+
+SYNC_REPO_ROOT
+SYNC_RECORD_PATH
+SYNC_STATE_PATH
+PYTHON_BIN
+INSTALL_DEPS
+计划文档已更新
+2026-02-02-cnblogs-zeabur-plan.md 已反映：全仓库、每小时 Cron、增量同步、sync-state 分支、以及使用独立 sync‑worker 仓库。
+
+待定
+
+FORCE_OVERWRITE_EXISTING（是否保持 True 或改为 False）
+备注
+
+本地无 Python，无法运行 py_compile。
+worker 仓库尚未提交/推送，等待远程地址。
+可选下一步：补充 Zeabur Cron 指南、环境变量模板、以及可选 sparse‑checkout 优化。
+有点乱，我们先梳理一下逻辑，暂时使用当前仓库做同步工作，你刚刚创建的哪个worker就不要了，先删除
+
+我刚刚尝试删除 /home/q/Desktop/START/repos/Daily (妙蛙种子)/cnblogs-sync-worker，但命令被执行策略阻止了，没能直接删除。你可以手动删一下（文件管理器或执行）：
+rm -rf "/home/q/Desktop/START/repos/Daily (妙蛙种子)/cnblogs-sync-worker"
+
+先把“当前仓库做同步”的逻辑梳理清楚（不再用 worker）：
+
+仓库：assemble-publish 就是同步执行环境本体
+状态：用 sync-state 分支持久化 .cnblogs_sync_record.json + state.json
+增量：脚本读取 last_synced_commit，对比 HEAD 做 diff，仅同步变更
+运行流程：
+平台（Zeabur）拉取当前仓库
+运行 sync_to_cnblogs.py
+脚本从 sync-state 分支读状态（SYNC_STATE_GIT=true）
+同步后更新状态文件并推回 sync-state 分支
+如果你同意这条主线，我可以立刻做这些动作之一：
+
+把 2026-02-02-cnblogs-zeabur-plan.md 里关于 worker 的部分移除/改写为“当前仓库直接执行”
+新增 .env.example 或 Zeabur 环境变量模板
+决定 FORCE_OVERWRITE_EXISTING 默认值，并写进文档/脚本说明
+你想我先做哪一项？
+
