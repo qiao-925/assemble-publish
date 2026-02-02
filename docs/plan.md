@@ -18,12 +18,12 @@
 
 ## 2) 现状资产梳理（已存在）
 
-- 脚本：`🗀 04-cnblogs_sync (6个文件，1.3%)/sync_to_cnblogs.py`
+- 脚本：`cnblogs_sync/sync_to_cnblogs.py`
   - 支持 `--init` 初始化本地记录
   - 自动扫描全仓 Markdown（排除 `.git/.github/node_modules/cnblogs_sync` 等）
   - 依赖本地记录文件：`.cnblogs_sync_record.json`
-- 去重脚本：`🗀 04-cnblogs_sync (6个文件，1.3%)/deduplicate_cnblogs.py`
-- 旧的 GitHub Actions 工作流（存档）：`publish_to_cnblogs.yml.archived`
+- 去重脚本：`cnblogs_sync/deduplicate_cnblogs.py`
+- 旧的 GitHub Actions 工作流（存档）：`docs/publish_to_cnblogs.yml.archived`
 
 ---
 
@@ -59,15 +59,14 @@
 
 ## 5) 推荐的最小可行路径（可快速落地）
 
-> 采用 **方案 A** + **Git 专用分支持久化** + **sync-worker 小仓库**，快速验证自动化闭环，后续再考虑升级为方案 B。
+> 采用 **方案 A** + **Git 专用分支持久化**，快速验证自动化闭环，后续再考虑升级为方案 B。
 
 ### 阶段 1（MVP）
 1. 确定同步范围为全仓（已定）。
-2. 拆出 `sync-worker` 小仓库，仅包含运行脚本与依赖。
-3. 运行时浅克隆主仓库（减小拉取成本）。
-4. 配置 Zeabur 环境变量（含 Git PAT），启用 `sync-state` 分支持久化。
-5. 先手动运行一次 `--init`，确保记录可用。
-6. 建立定时任务（每小时执行一次）。
+2. Zeabur 直接拉取当前仓库（`assemble-publish`）。
+3. 配置 Zeabur 环境变量（含 Git PAT），启用 `sync-state` 分支持久化。
+4. 首次运行前，先手动执行一次 `--init`，确保发布记录可用。
+5. 建立定时任务（每小时执行一次）。
 
 ### 阶段 2（优化）
 1. 支持“增量同步”——只同步变更文件（减少 API 调用）。
@@ -80,6 +79,24 @@
 
 - 是否允许覆盖已存在文章（`FORCE_OVERWRITE_EXISTING`）？
 - 是否需要额外的失败通知（邮件/飞书/钉钉/Slack）？
+
+---
+
+## 9) 落地运行方式（当前主线：不再使用 worker）
+
+### 运行流程（Zeabur Cron）
+1. Zeabur 拉取当前仓库 `assemble-publish`
+2. 定时执行：`python cnblogs_sync/sync_to_cnblogs.py`
+3. 脚本在启动时（`SYNC_STATE_GIT=true`）：从 `sync-state` 分支恢复 `.cnblogs_sync_record.json` + `state.json`
+4. 同步完成后：更新状态文件并 push 回 `sync-state` 分支（需要 `SYNC_STATE_REMOTE_URL` 提供 PAT 权限）
+
+### 首次初始化（必须手动跑一次）
+
+```bash
+python cnblogs_sync/sync_to_cnblogs.py --init
+```
+
+> 初始化会从 API 获取最近 300 篇文章标题与 post_id，写入 `.cnblogs_sync_record.json`，用于后续去重与避免重复发布。
 
 ---
 

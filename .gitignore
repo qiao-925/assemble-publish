@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# 增量同步状态（建议通过 sync-state 分支持久化）
+**/state.json
+
+# Claude Code 配置
+.claude/

@@ -4,9 +4,11 @@
 import os
 import sys
 import time
+import json
 import xmlrpc.client
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 
 # 加载 .env 文件中的环境变量
@@ -23,9 +25,42 @@ if sys.platform == 'win32':
 # --- 配置信息 ---
 RPC_URL = os.getenv("CNBLOGS_RPC_URL")
 USERNAME = os.getenv("CNBLOGS_USERNAME")
-TOKEN = os.getenv("CNBLOGS_TOKEN")
+TOKEN = os.getenv("CNBLOGS_TOKEN") or os.getenv("CNBLOGS_PASSWORD")
 # BLOG_ID 可以从环境变量读取，如果没有则通过 API 自动获取
 BLOG_ID = os.getenv("CNBLOGS_BLOG_ID")
+
+# 可选：同步脚本的发布记录文件（用于去重后修正本地记录，避免 record 指向被删的 post_id）
+REPO_ROOT = Path(os.getenv("SYNC_REPO_ROOT", Path.cwd())).resolve()
+SYNC_RECORD_PATH = os.getenv("SYNC_RECORD_PATH", ".cnblogs_sync/.cnblogs_sync_record.json")
+SYNC_RECORD_FILE = Path(SYNC_RECORD_PATH)
+if not SYNC_RECORD_FILE.is_absolute():
+    SYNC_RECORD_FILE = (REPO_ROOT / SYNC_RECORD_FILE).resolve()
+
+# 说明：本脚本会“删除”博客园上的重复文章；同时会尝试把本地发布记录（SYNC_RECORD_PATH）修正为保留的 post_id。
+
+def load_sync_record():
+    """加载同步脚本的发布记录（不存在则返回 None）"""
+    if not SYNC_RECORD_FILE.exists():
+        return None
+    try:
+        return json.loads(SYNC_RECORD_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"⚠️ 加载发布记录文件失败，将跳过更新: {SYNC_RECORD_FILE} ({e})")
+        return None
+
+def save_sync_record(record):
+    """保存同步脚本的发布记录"""
+    try:
+        SYNC_RECORD_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SYNC_RECORD_FILE.write_text(
+            json.dumps(record, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+        print(f"✅ 已更新发布记录文件: {SYNC_RECORD_FILE}")
+        return True
+    except Exception as e:
+        print(f"⚠️ 写入发布记录文件失败: {SYNC_RECORD_FILE} ({e})")
+        return False
 
 # --- 配置选项 ---
 KEEP_LATEST = True  # True: 保留最新的，删除旧的；False: 保留最早的，删除新的
@@ -172,6 +207,9 @@ def delete_post(server, post_id, title):
 def deduplicate_one_round(server):
     """执行一轮去重，返回是否还有重复文章"""
     global BLOG_ID
+
+    sync_record = load_sync_record()
+    updated_record = False
     
     # 1. 获取所有文章（API 极限是 300 篇）
     all_posts = get_all_posts(server, max_posts=300)
@@ -253,6 +291,13 @@ def deduplicate_one_round(server):
         delete_posts = posts_list[1:]
         
         print(f"   ✓ 保留: Post ID {keep_post.get('postid')} (创建时间: {format_date(keep_post.get('dateCreated', keep_post.get('pubDate', 'N/A')))})")
+
+        # 如果存在本地发布记录文件，顺手把该标题的 post_id 修正为“保留的那篇”
+        if sync_record is not None and not DRY_RUN:
+            keep_id = keep_post.get('postid')
+            if keep_id is not None:
+                sync_record[title] = keep_id
+                updated_record = True
         
         for post in delete_posts:
             post_id = post.get('postid')
@@ -294,6 +339,13 @@ def deduplicate_one_round(server):
             print(f"   - 删除失败: {total_failed} 篇")
     print("=" * 60)
     print()
+
+    # 去重完成后，若有本地发布记录文件，则落盘一次（避免 record 指向被删的 post_id）
+    if sync_record is not None:
+        if DRY_RUN:
+            print(f"ℹ️ DRY_RUN=true：未更新发布记录文件: {SYNC_RECORD_FILE}")
+        elif updated_record:
+            save_sync_record(sync_record)
     
     return True  # 有重复，已处理
 
@@ -307,7 +359,7 @@ def deduplicate_posts():
     if not USERNAME:
         missing_vars.append("CNBLOGS_USERNAME")
     if not TOKEN:
-        missing_vars.append("CNBLOGS_TOKEN")
+        missing_vars.append("CNBLOGS_TOKEN / CNBLOGS_PASSWORD")
     
     if missing_vars:
         print("❌ 错误：以下环境变量未设置：")

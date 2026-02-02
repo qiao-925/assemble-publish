@@ -1,0 +1,12 @@
+.git
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Claude Code 配置
+.claude/
+
+# 文档目录（可选：如果不想打包到镜像）
+# docs/

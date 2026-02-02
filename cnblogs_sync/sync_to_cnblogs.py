@@ -10,7 +10,8 @@
 #   - CNBLOGS_RPC_URL: 博客园 RPC 地址（必需）
 #   - CNBLOGS_BLOG_ID: 博客 ID（可选，未设置时会自动获取）
 #   - CNBLOGS_USERNAME: 用户名（必需）
-#   - CNBLOGS_PASSWORD: 密码或 Token（必需）
+#   - CNBLOGS_PASSWORD: 密码或 Token（必需；也可用 CNBLOGS_TOKEN 代替）
+#   - CNBLOGS_TOKEN: Token（可选；作为 CNBLOGS_PASSWORD 的别名）
 #   - KNOWLEDGE_BASE_URL: 知识库基础 URL（可选，默认：https://assemble.gitbook.io/assemble）
 #   - CNBLOGS_SEARCH_URL: 博客园站内搜索 URL（可选，默认：https://zzk.cnblogs.com/my/s/blogpost-p）
 #   - INCREMENTAL_SYNC: 是否启用增量同步（默认 True）
@@ -44,7 +45,7 @@
 #   设置为 True 时，已存在的文章会被更新；False 时跳过已存在的文章
 #
 # 【本地记录文件】
-# - 位置：默认在仓库内的 `🗀 04-cnblogs_sync (6个文件，1.3%)/.cnblogs_sync_record.json`
+# - 位置：默认在仓库内的 `.cnblogs_sync/.cnblogs_sync_record.json`
 # - 格式：{ "文章标题": "post_id", ... }
 # - 作用：记录已发布到博客园的文章，避免重复发布
 
@@ -69,13 +70,17 @@ load_dotenv()
 RPC_URL = os.getenv("CNBLOGS_RPC_URL")
 BLOG_ID = os.getenv("CNBLOGS_BLOG_ID")
 USERNAME = os.getenv("CNBLOGS_USERNAME")
-PASSWORD = os.getenv("CNBLOGS_PASSWORD")
+PASSWORD = os.getenv("CNBLOGS_PASSWORD") or os.getenv("CNBLOGS_TOKEN")
 # 知识库和博客园搜索 URL 配置
 KNOWLEDGE_BASE_URL = os.getenv("KNOWLEDGE_BASE_URL", "https://assemble.gitbook.io/assemble")
 CNBLOGS_SEARCH_URL = os.getenv("CNBLOGS_SEARCH_URL", "https://zzk.cnblogs.com/my/s/blogpost-p")
 
-# --- 本地化开关 ---
-FORCE_OVERWRITE_EXISTING = True  # 默认更新已存在的文章
+# --- Git / 运行环境小优化 ---
+# 避免在无交互环境（Zeabur/Cron）里 git push 触发凭据交互卡死
+os.environ.setdefault("GIT_TERMINAL_PROMPT", "0")
+
+# --- 行为开关 ---
+FORCE_OVERWRITE_EXISTING = os.getenv("FORCE_OVERWRITE_EXISTING", "true").lower() in {"1", "true", "yes", "y", "on"}
 
 # --- 仓库根目录（支持外部传入） ---
 REPO_ROOT = Path(os.getenv("SYNC_REPO_ROOT", Path(__file__).parent.parent)).resolve()
@@ -83,11 +88,11 @@ REPO_ROOT = Path(os.getenv("SYNC_REPO_ROOT", Path(__file__).parent.parent)).reso
 # --- 记录/状态文件路径（默认相对仓库根目录） ---
 SYNC_RECORD_PATH = os.getenv(
     "SYNC_RECORD_PATH",
-    "🗀 04-cnblogs_sync (6个文件，1.3%)/.cnblogs_sync_record.json"
+    ".cnblogs_sync/.cnblogs_sync_record.json"
 )
 SYNC_STATE_PATH = os.getenv(
     "SYNC_STATE_PATH",
-    "🗀 04-cnblogs_sync (6个文件，1.3%)/state.json"
+    ".cnblogs_sync/state.json"
 )
 
 def resolve_repo_path(path_str):
@@ -108,7 +113,7 @@ SYNC_STATE_REMOTE = os.getenv("SYNC_STATE_REMOTE", "origin")
 SYNC_STATE_REMOTE_URL = os.getenv("SYNC_STATE_REMOTE_URL")
 
 # --- 需要排除的目录（不扫描这些目录下的文件） ---
-EXCLUDE_DIRS = {'.git', '.github', 'node_modules', '__pycache__', '.vscode', '.idea', 'cnblogs_sync'}
+EXCLUDE_DIRS = {'.git', '.github', 'node_modules', '__pycache__', '.vscode', '.idea', 'cnblogs_sync', '.cnblogs_sync'}
 
 # --- 函数定义 ---
 
@@ -152,6 +157,21 @@ def remote_branch_exists(remote, branch):
     result = run_git(["ls-remote", "--heads", remote, branch])
     return result.returncode == 0 and bool(result.stdout.strip())
 
+def ensure_git_identity(cwd):
+    """确保 git commit 的 user.name/user.email 已配置（CI/容器环境常缺省）"""
+    result_name = run_git(["config", "--get", "user.name"], cwd=cwd)
+    result_email = run_git(["config", "--get", "user.email"], cwd=cwd)
+
+    user_name = (result_name.stdout or "").strip() if result_name.returncode == 0 else ""
+    user_email = (result_email.stdout or "").strip() if result_email.returncode == 0 else ""
+
+    if not user_name:
+        default_name = os.getenv("GIT_USER_NAME", "cnblogs-sync-bot")
+        run_git(["config", "user.name", default_name], cwd=cwd, check=True)
+    if not user_email:
+        default_email = os.getenv("GIT_USER_EMAIL", "cnblogs-sync-bot@users.noreply.github.com")
+        run_git(["config", "user.email", default_email], cwd=cwd, check=True)
+
 def restore_state_from_git():
     """从专用分支恢复状态文件（记录 + 增量状态）"""
     if not SYNC_STATE_GIT:
@@ -165,7 +185,7 @@ def restore_state_from_git():
         if not has_remote(SYNC_STATE_REMOTE):
             print(f"⚠️ 未找到 remote '{SYNC_STATE_REMOTE}'，请设置 SYNC_STATE_REMOTE_URL")
             return
-        run_git(["fetch", SYNC_STATE_REMOTE, SYNC_STATE_BRANCH])
+        run_git(["fetch", SYNC_STATE_REMOTE, SYNC_STATE_BRANCH], check=True)
     except Exception as e:
         print(f"⚠️ 拉取分支失败，跳过状态恢复：{e}")
         return
@@ -235,6 +255,7 @@ def persist_state_to_git():
             return True
 
         run_git(["add"] + rel_paths, cwd=temp_dir, check=True)
+        ensure_git_identity(temp_dir)
         commit_msg = f"chore: update cnblogs sync state ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
         run_git(["commit", "-m", commit_msg], cwd=temp_dir, check=True)
         run_git(["push", SYNC_STATE_REMOTE, SYNC_STATE_BRANCH], cwd=temp_dir, check=True)
@@ -369,9 +390,22 @@ def save_sync_record(record):
     except Exception as e:
         print(f"⚠️ 保存发布记录文件时出错: {e}")
 
+def get_blog_id(server):
+    """自动获取 BLOG_ID（CNBLOGS_BLOG_ID）"""
+    try:
+        blogs = server.blogger.getUsersBlogs('', USERNAME, PASSWORD)
+        if blogs and len(blogs) > 0:
+            blog = blogs[0] or {}
+            blog_id = blog.get('blogid') or blog.get('blogId') or blog.get('id')
+            return str(blog_id) if blog_id is not None else None
+    except Exception as e:
+        print(f"⚠️ 自动获取 BLOG_ID 失败: {e}")
+    return None
+
 def init_sync_record():
     """初始化发布记录：从 API 获取最近 300 篇文章的标题和 post_id"""
-    if not all([RPC_URL, BLOG_ID, USERNAME, PASSWORD]):
+    global BLOG_ID
+    if not all([RPC_URL, USERNAME, PASSWORD]):
         print("❌ 错误：一个或多个环境变量未设置，无法初始化发布记录")
         return False
     
@@ -379,15 +413,25 @@ def init_sync_record():
     
     try:
         server = xmlrpc.client.ServerProxy(RPC_URL)
+        if not BLOG_ID:
+            BLOG_ID = get_blog_id(server)
+            if not BLOG_ID:
+                print("❌ 错误：CNBLOGS_BLOG_ID 未设置且无法自动获取，请手动设置 CNBLOGS_BLOG_ID")
+                return False
+            print(f"✅ 自动获取到 BLOG_ID: {BLOG_ID}")
+
         # API 极限是 300 篇
         recent_posts = server.metaWeblog.getRecentPosts(BLOG_ID, USERNAME, PASSWORD, 300)
         
         if not recent_posts:
-            print("ℹ️ 未获取到任何文章")
-            return False
+            record = load_sync_record() or {}
+            save_sync_record(record)
+            print("ℹ️ 未获取到任何文章，已初始化空发布记录")
+            print(f"📁 记录文件保存在: {SYNC_RECORD_FILE}")
+            return True
         
-        # 构建记录字典：{标题: post_id}
-        record = {}
+        # 合并模式：保留旧记录 + 用最近 300 篇刷新 post_id（避免因 API 限制丢失旧映射）
+        record = load_sync_record() or {}
         for post in recent_posts:
             title = post.get('title', '').strip()
             post_id = post.get('postid')
@@ -476,12 +520,10 @@ if __name__ == "__main__":
     missing_vars = []
     if not RPC_URL:
         missing_vars.append("CNBLOGS_RPC_URL")
-    if not BLOG_ID:
-        missing_vars.append("CNBLOGS_BLOG_ID")
     if not USERNAME:
         missing_vars.append("CNBLOGS_USERNAME")
     if not PASSWORD:
-        missing_vars.append("CNBLOGS_PASSWORD")
+        missing_vars.append("CNBLOGS_PASSWORD / CNBLOGS_TOKEN")
     
     if missing_vars:
         print("❌ 错误：以下环境变量未设置：")
@@ -493,10 +535,36 @@ if __name__ == "__main__":
     # 如果开启 Git 状态持久化，先尝试恢复状态文件
     restore_state_from_git()
 
+    # BLOG_ID 可选：未设置则尝试自动获取
+    if not BLOG_ID:
+        try:
+            server = xmlrpc.client.ServerProxy(RPC_URL)
+            BLOG_ID = get_blog_id(server)
+            if BLOG_ID:
+                print(f"✅ 自动获取到 BLOG_ID: {BLOG_ID}")
+            else:
+                print("❌ 错误：CNBLOGS_BLOG_ID 未设置且无法自动获取，请手动设置 CNBLOGS_BLOG_ID")
+                sys.exit(1)
+        except Exception as e:
+            print(f"❌ 自动获取 BLOG_ID 失败: {e}")
+            sys.exit(1)
+
     # 检查是否需要初始化记录
     if len(sys.argv) > 1 and sys.argv[1] == '--init':
-        init_sync_record()
+        ok = init_sync_record()
+        if not ok:
+            sys.exit(1)
+        if not persist_state_to_git():
+            sys.exit(2)
         sys.exit(0)
+
+    # 安全保护：没有发布记录时，禁止继续（避免重复创建文章）
+    if not SYNC_RECORD_FILE.exists():
+        print("❌ 未找到发布记录文件，已中止以避免重复发布。")
+        print(f"   - 期望路径: {SYNC_RECORD_FILE}")
+        print("💡 解决办法：先运行一次初始化：")
+        print(f"   python \"{Path(__file__).resolve()}\" --init")
+        sys.exit(1)
 
     # 读取增量同步状态
     sync_state = load_sync_state()
