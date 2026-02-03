@@ -9,17 +9,9 @@ set -euo pipefail
 #   CNBLOGS_RPC_URL         博客园 RPC 地址
 #   CNBLOGS_USERNAME        博客园用户名
 #   CNBLOGS_TOKEN           博客园 Token（兼容 CNBLOGS_PASSWORD）
-#   SYNC_REPO_URL           主仓库地址（建议用带 PAT 的 HTTPS；私有仓库必须）
-# 可选：
-#   SYNC_REPO_BRANCH        默认 main（示例中可设为 sync-state）
-#   SYNC_REPO_DEPTH         默认 50；设为 0 表示完整克隆
-#   WORKDIR                默认 /tmp/assemble-main-repo（如果 WORKDIR 可持久化，则可复用以避免每次 clone）
-#   PYTHON_BIN             默认 python3（不存在则回退 python）
-#   INSTALL_DEPS           默认 true（安装 python-dotenv）
-#   SYNC_RECORD_PATH       默认 .cnblogs_sync/.cnblogs_sync_record.json
-#   SYNC_STATE_PATH        默认 .cnblogs_sync/state.json
+#   SYNC_REPO_URL           主仓库地址（普通 HTTPS URL；仅支持公共仓库）
 
-: "${SYNC_REPO_URL?Need SYNC_REPO_URL (e.g. https://<PAT>@github.com/user/main-repo.git)}"
+: "${SYNC_REPO_URL?Need SYNC_REPO_URL (public repo URL, e.g. https://github.com/user/main-repo.git)}"
 : "${SYNC_REPO_BRANCH:=main}"
 : "${SYNC_REPO_DEPTH:=50}"
 : "${WORKDIR:=/tmp/assemble-main-repo}"

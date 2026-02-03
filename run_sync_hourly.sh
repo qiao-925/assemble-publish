@@ -13,7 +13,7 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   PYTHON_BIN="python"
 fi
 
-: "${RUN_IMMEDIATELY:=false}"
+: "${RUN_IMMEDIATELY:=true}"
 
 run_once() {
   "$SCRIPT_DIR/run_sync.sh"
