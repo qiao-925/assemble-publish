@@ -23,7 +23,7 @@
 
 ### 2. 去重工具开发
 
-创建了 `cnblogs_sync/deduplicate_cnblogs.py` 脚本，具备以下功能：
+创建了 `deduplicate_cnblogs.py` 脚本，具备以下功能：
 
 - ✅ **自动获取博客ID**: 通过 `blogger.getUsersBlogs` API 自动获取
 - ✅ **批量获取文章**: 支持获取最多 300 篇文章（API 极限）
@@ -70,7 +70,7 @@
 
 ## 📋 脚本功能说明
 
-### `cnblogs_sync/deduplicate_cnblogs.py`
+### `deduplicate_cnblogs.py`
 
 **核心功能**:
 - 自动迭代执行去重，直到没有重复文章
@@ -87,7 +87,7 @@ DELETE_DELAY = 1     # 每次删除操作之间的延迟（秒）
 
 **使用方法**:
 ```bash
-python cnblogs_sync/deduplicate_cnblogs.py
+python deduplicate_cnblogs.py
 ```
 
 **工作流程**:
@@ -160,8 +160,8 @@ python cnblogs_sync/deduplicate_cnblogs.py
 
 ## 📚 相关文件
 
-- `cnblogs_sync/sync_to_cnblogs.py` - 同步脚本（需要修复重复创建问题）
-- `cnblogs_sync/deduplicate_cnblogs.py` - 去重工具
+- `sync_to_cnblogs.py` - 同步脚本（需要修复重复创建问题）
+- `deduplicate_cnblogs.py` - 去重工具
 - `.github/workflows/publish_to_cnblogs.yml` - GitHub Actions 工作流
 
 ---

@@ -287,7 +287,13 @@ def main() -> int:
                 continue
             args.append(arg)
 
-        sync_script = SCRIPT_DIR / "cnblogs_sync" / "sync_to_cnblogs.py"
+        sync_script_candidates = [
+            SCRIPT_DIR / "sync_to_cnblogs.py",
+            SCRIPT_DIR / "cnblogs_sync" / "sync_to_cnblogs.py",
+        ]
+        sync_script = next((p for p in sync_script_candidates if p.is_file()), None)
+        if not sync_script:
+            raise FileNotFoundError("未找到同步脚本：sync_to_cnblogs.py")
         run([sys.executable, str(sync_script), *args], cwd=workdir_path, env=env)
         args_display = " ".join(args) if args else "(无)"
         sync_detail = f"参数={args_display}"

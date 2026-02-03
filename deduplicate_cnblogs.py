@@ -1,4 +1,4 @@
-# cnblogs_sync/deduplicate_cnblogs.py
+# deduplicate_cnblogs.py
 # -*- coding: utf-8 -*-
 # 修复性脚本，不在主流程中调用
 

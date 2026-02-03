@@ -1,4 +1,4 @@
-# cnblogs_sync/sync_to_cnblogs.py
+# sync_to_cnblogs.py
 #
 # 博客园文章发布脚本
 #
@@ -17,14 +17,14 @@
 #
 # 1. 发布文章到博客园（首次运行会自动初始化发布记录）：
 #    a) 自动模式（推荐）：不指定文件，自动扫描仓库中所有 .md 文件
-#       python cnblogs_sync/sync_to_cnblogs.py
+#       python sync_to_cnblogs.py
 #    b) 手动模式：指定要发布的文件
-#       python cnblogs_sync/sync_to_cnblogs.py <file1.md> [file2.md] ...
+#       python sync_to_cnblogs.py <file1.md> [file2.md] ...
 #    说明：将 Markdown 文件发布到博客园
 #          - 若发布记录不存在，会自动从 API 获取最近 300 篇文章生成记录
 #          - 如果文章已在本地记录中（已发布过），默认执行更新
 #          - 如果是新文章，直接发布并自动更新本地记录
-#          - 自动模式会排除 .git、.github、node_modules、cnblogs_sync 等目录
+#          - 自动模式会排除 .git、.github、node_modules 等目录
 #
 # 【本地记录文件】
 # - 位置：默认在仓库内的 `.cnblogs_sync/.cnblogs_sync_record.json`
@@ -171,10 +171,13 @@ def run_git(args, cwd=None, check=False):
         cmd,
         cwd=cwd or REPO_ROOT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True
     )
     if check and result.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+        stderr = (result.stderr or "").strip()
+        raise RuntimeError(f"git {' '.join(args)} failed: {stderr}")
     return result
 
 def is_git_repo():

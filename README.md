@@ -59,7 +59,11 @@ python run_sync_hourly.py
 
 ## 去重工具（历史）
 
-`deduplicate stuff/` 中包含历史去重脚本，仅在早期已产生重复文章时使用。
+如需处理历史遗留的重复文章，可使用去重工具：
+
+- `deduplicate_cnblogs.py`：按标题删除重复文章（保留最新）
+- `deduplication.md`：原理与注意事项说明
+
 当前主流程已通过发布记录与状态分支避免重复发布。
 
 ## 常见问题
