@@ -8,21 +8,10 @@
 # 【环境变量配置】
 # 使用前需要设置以下环境变量（通过 .env 文件或系统环境变量）：
 #   - CNBLOGS_RPC_URL: 博客园 RPC 地址（必需）
-#   - CNBLOGS_BLOG_ID: 博客 ID（可选，未设置时会自动获取）
 #   - CNBLOGS_USERNAME: 用户名（必需）
-#   - CNBLOGS_TOKEN: Token（必需；兼容 CNBLOGS_PASSWORD）
-#   - CNBLOGS_PASSWORD: 密码（可选；作为 CNBLOGS_TOKEN 的别名）
-#   - KNOWLEDGE_BASE_URL: 知识库基础 URL（可选，默认：https://assemble.gitbook.io/assemble）
-#   - CNBLOGS_SEARCH_URL: 博客园站内搜索 URL（可选，默认：https://zzk.cnblogs.com/my/s/blogpost-p）
-#   - INCREMENTAL_SYNC: 是否启用增量同步（默认 True）
-#   - SYNC_STATE_GIT: 是否将状态写回 Git 分支（默认 True）
-#   - SYNC_STATE_BRANCH: 状态分支名（默认 sync-state）
-#   - SYNC_STATE_REMOTE: 远端名（默认 origin）
-#   - SYNC_STATE_REMOTE_URL: 远端地址（可选，用于写回 PAT URL）
-#   - SYNC_REPO_ROOT: 目标仓库根目录（可选）
-#   - SYNC_RECORD_PATH: 记录文件相对仓库路径（可选）
-#   - SYNC_STATE_PATH: 状态文件相对仓库路径（可选）
-#   - SYNC_RUN_LOG_PATH: 运行记录文件相对仓库路径（可选）
+#   - CNBLOGS_TOKEN: Token（必需）
+#   - SYNC_REPO_URL: 目标仓库地址（必需）
+#   - SYNC_REPO_TOKEN: 推送状态分支用的 Token（必需）
 #
 # 【使用方法】
 #
@@ -33,13 +22,9 @@
 #       python cnblogs_sync/sync_to_cnblogs.py <file1.md> [file2.md] ...
 #    说明：将 Markdown 文件发布到博客园
 #          - 若发布记录不存在，会自动从 API 获取最近 300 篇文章生成记录
-#          - 如果文章已在本地记录中（已发布过），根据 FORCE_OVERWRITE_EXISTING 开关决定是否更新
+#          - 如果文章已在本地记录中（已发布过），默认执行更新
 #          - 如果是新文章，直接发布并自动更新本地记录
 #          - 自动模式会排除 .git、.github、node_modules、cnblogs_sync 等目录
-#
-# 【配置选项】
-# - FORCE_OVERWRITE_EXISTING: 是否更新已存在的文章（默认 True）
-#   设置为 True 时，已存在的文章会被更新；False 时跳过已存在的文章
 #
 # 【本地记录文件】
 # - 位置：默认在仓库内的 `.cnblogs_sync/.cnblogs_sync_record.json`
@@ -55,46 +40,43 @@ import subprocess
 import tempfile
 import shutil
 import xmlrpc.client
+from urllib.parse import urlparse, urlunparse, quote
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from dotenv import load_dotenv
 # from urllib.parse import quote # 不再需要这个模块，可以移除
 
 # 加载 .env 文件中的环境变量
 load_dotenv()
 
-# --- 配置信息 ---
+# --- 配置信息（仅保留必需项） ---
 RPC_URL = os.getenv("CNBLOGS_RPC_URL")
-BLOG_ID = os.getenv("CNBLOGS_BLOG_ID")
 USERNAME = os.getenv("CNBLOGS_USERNAME")
-PASSWORD = os.getenv("CNBLOGS_TOKEN") or os.getenv("CNBLOGS_PASSWORD")
-# 知识库和博客园搜索 URL 配置
-KNOWLEDGE_BASE_URL = os.getenv("KNOWLEDGE_BASE_URL", "https://assemble.gitbook.io/assemble")
-CNBLOGS_SEARCH_URL = os.getenv("CNBLOGS_SEARCH_URL", "https://zzk.cnblogs.com/my/s/blogpost-p")
+PASSWORD = os.getenv("CNBLOGS_TOKEN")
+
+SYNC_REPO_URL = os.getenv("SYNC_REPO_URL")
+SYNC_REPO_TOKEN = os.getenv("SYNC_REPO_TOKEN")
+
+# 下面为固定默认值，不对外暴露配置
+BLOG_ID = None  # 自动获取
+KNOWLEDGE_BASE_URL = "https://assemble.gitbook.io/assemble"
+CNBLOGS_SEARCH_URL = "https://zzk.cnblogs.com/my/s/blogpost-p"
 
 # --- Git / 运行环境小优化 ---
 # 避免在无交互环境（Zeabur/Cron）里 git push 触发凭据交互卡死
 os.environ.setdefault("GIT_TERMINAL_PROMPT", "0")
 
 # --- 行为开关 ---
-FORCE_OVERWRITE_EXISTING = os.getenv("FORCE_OVERWRITE_EXISTING", "true").lower() in {"1", "true", "yes", "y", "on"}
+FORCE_OVERWRITE_EXISTING = True
 
 # --- 仓库根目录（支持外部传入） ---
-REPO_ROOT = Path(os.getenv("SYNC_REPO_ROOT", Path(__file__).parent.parent)).resolve()
+REPO_ROOT = Path.cwd().resolve()
 
 # --- 记录/状态文件路径（默认相对仓库根目录） ---
-SYNC_RECORD_PATH = os.getenv(
-    "SYNC_RECORD_PATH",
-    ".cnblogs_sync/.cnblogs_sync_record.json"
-)
-SYNC_STATE_PATH = os.getenv(
-    "SYNC_STATE_PATH",
-    ".cnblogs_sync/state.json"
-)
-SYNC_RUN_LOG_PATH = os.getenv(
-    "SYNC_RUN_LOG_PATH",
-    ".cnblogs_sync/run_history.jsonl"
-)
+SYNC_RECORD_PATH = ".cnblogs_sync/.cnblogs_sync_record.json"
+SYNC_STATE_PATH = ".cnblogs_sync/state.json"
+SYNC_RUN_LOG_PATH = ".cnblogs_sync/run_history.jsonl"
 
 def resolve_repo_path(path_str):
     """将路径解析为仓库内绝对路径（支持绝对路径）"""
@@ -109,11 +91,73 @@ SYNC_STATE_FILE = resolve_repo_path(SYNC_STATE_PATH)
 SYNC_RUN_LOG_FILE = resolve_repo_path(SYNC_RUN_LOG_PATH)
 
 # --- 增量同步与 Git 持久化配置 ---
-INCREMENTAL_SYNC = os.getenv("INCREMENTAL_SYNC", "true").lower() in {"1", "true", "yes", "y"}
-SYNC_STATE_GIT = os.getenv("SYNC_STATE_GIT", "true").lower() in {"1", "true", "yes", "y"}
-SYNC_STATE_BRANCH = os.getenv("SYNC_STATE_BRANCH", "sync-state")
-SYNC_STATE_REMOTE = os.getenv("SYNC_STATE_REMOTE", "origin")
-SYNC_STATE_REMOTE_URL = os.getenv("SYNC_STATE_REMOTE_URL")
+INCREMENTAL_SYNC = True
+SYNC_STATE_GIT = True
+SYNC_STATE_BRANCH = "sync-state"
+SYNC_STATE_REMOTE = "origin"
+
+def build_state_remote_url():
+    """基于 SYNC_REPO_URL + SYNC_REPO_TOKEN 自动拼接可写远端"""
+    if not SYNC_REPO_URL or not SYNC_REPO_TOKEN:
+        return None
+
+    try:
+        parsed = urlparse(SYNC_REPO_URL)
+    except Exception:
+        return None
+
+    if parsed.scheme not in {"http", "https"}:
+        print("⚠️ 仅支持 http/https 形式的 SYNC_REPO_URL 用于自动拼接 Token")
+        return None
+
+    # 若已包含凭据，直接复用原始 URL
+    if parsed.username or parsed.password:
+        return SYNC_REPO_URL
+
+    token = quote(SYNC_REPO_TOKEN, safe="")
+    netloc = f"{token}@{parsed.netloc}"
+    return urlunparse(parsed._replace(netloc=netloc))
+
+SYNC_STATE_REMOTE_URL = build_state_remote_url()
+
+SYNC_STEPS = [
+    "准备与恢复状态",
+    "初始化发布记录",
+    "检测变更并生成待发布列表",
+    "发布/更新文章",
+    "写回状态分支",
+]
+
+
+def log_plan():
+    print("执行计划（同步流程）：")
+    for i, title in enumerate(SYNC_STEPS, 1):
+        print(f"  {i}. {title}")
+
+
+def log_step_start(step_index: int) -> None:
+    print(f"\n[{step_index}/{len(SYNC_STEPS)}] {SYNC_STEPS[step_index - 1]}")
+
+
+def log_step_ok(step_index: int, detail: str | None = None) -> None:
+    title = SYNC_STEPS[step_index - 1]
+    if detail:
+        print(f"✅ {title}：{detail}")
+    else:
+        print(f"✅ {title} 完成")
+
+
+def log_step_skip(step_index: int, detail: str | None = None) -> None:
+    title = SYNC_STEPS[step_index - 1]
+    if detail:
+        print(f"⏭️ {title}：{detail}")
+    else:
+        print(f"⏭️ {title} 跳过")
+
+
+def log_step_fail(step_index: int, detail: str) -> None:
+    title = SYNC_STEPS[step_index - 1]
+    print(f"❌ {title} 失败：{detail}")
 
 # --- 需要排除的目录（不扫描这些目录下的文件） ---
 EXCLUDE_DIRS = {'.git', '.github', 'node_modules', '__pycache__', '.vscode', '.idea', 'cnblogs_sync', '.cnblogs_sync'}
@@ -175,64 +219,91 @@ def ensure_git_identity(cwd):
         default_email = os.getenv("GIT_USER_EMAIL", "cnblogs-sync-bot@users.noreply.github.com")
         run_git(["config", "user.email", default_email], cwd=cwd, check=True)
 
-def restore_state_from_git():
+def restore_state_from_git() -> str:
     """从专用分支恢复状态文件（记录 + 增量状态）"""
     if not SYNC_STATE_GIT:
-        return
+        return "未启用"
     if not is_git_repo():
         print("⚠️ 当前目录不是 Git 仓库，无法从分支恢复状态")
-        return
+        return "跳过（非 Git 仓库）"
 
     try:
         ensure_remote(SYNC_STATE_REMOTE, SYNC_STATE_REMOTE_URL)
         if not has_remote(SYNC_STATE_REMOTE):
-            print(f"⚠️ 未找到 remote '{SYNC_STATE_REMOTE}'，请设置 SYNC_STATE_REMOTE_URL（带 PAT）或仅本地测试时设置 SYNC_STATE_GIT=false")
-            return
+            print(f"⚠️ 未找到 remote '{SYNC_STATE_REMOTE}'，请设置 SYNC_REPO_TOKEN")
+            return "跳过（remote 缺失）"
         run_git(["fetch", SYNC_STATE_REMOTE, SYNC_STATE_BRANCH], check=True)
     except Exception as e:
         print(f"⚠️ 拉取分支失败，跳过状态恢复：{e}")
-        return
+        return "跳过（拉取失败）"
 
+    restored = 0
+    missing = 0
+    skipped = 0
     for path in [SYNC_RECORD_FILE, SYNC_STATE_FILE, SYNC_RUN_LOG_FILE]:
         try:
             rel_path = path.relative_to(REPO_ROOT).as_posix()
         except ValueError:
             print(f"⚠️ 状态文件不在仓库内，跳过恢复: {path}")
+            skipped += 1
             continue
         result = run_git(["show", f"{SYNC_STATE_REMOTE}/{SYNC_STATE_BRANCH}:{rel_path}"])
         if result.returncode == 0:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(result.stdout, encoding="utf-8")
             print(f"✅ 已从分支恢复状态文件: {rel_path}")
+            restored += 1
         else:
             print(f"ℹ️ 分支未包含状态文件: {rel_path}")
+            missing += 1
+
+    if restored == 0 and missing == 0 and skipped == 0:
+        return "无状态文件"
+
+    parts = []
+    if restored:
+        parts.append(f"恢复={restored}")
+    if missing:
+        parts.append(f"缺失={missing}")
+    if skipped:
+        parts.append(f"跳过={skipped}")
+    return "，".join(parts)
 
 def persist_state_to_git():
     """将状态文件提交到专用分支并推送"""
     if not SYNC_STATE_GIT:
-        return True
+        return True, "未启用"
     if not is_git_repo():
         print("⚠️ 当前目录不是 Git 仓库，无法持久化状态")
-        return False
+        return False, "非 Git 仓库"
 
     temp_dir = None
     try:
         ensure_remote(SYNC_STATE_REMOTE, SYNC_STATE_REMOTE_URL)
         if not has_remote(SYNC_STATE_REMOTE):
-            print(f"⚠️ 未找到 remote '{SYNC_STATE_REMOTE}'，请设置 SYNC_STATE_REMOTE_URL（带 PAT）或仅本地测试时设置 SYNC_STATE_GIT=false")
-            return False
+            print(f"⚠️ 未找到 remote '{SYNC_STATE_REMOTE}'，请设置 SYNC_REPO_TOKEN")
+            return False, f"缺少 remote: {SYNC_STATE_REMOTE}"
         branch_exists = remote_branch_exists(SYNC_STATE_REMOTE, SYNC_STATE_BRANCH)
+        base_ref = "HEAD"
         if branch_exists:
-            run_git(["fetch", SYNC_STATE_REMOTE, SYNC_STATE_BRANCH], check=True)
+            try:
+                run_git(["fetch", SYNC_STATE_REMOTE, SYNC_STATE_BRANCH], check=True)
+                fetch_head = run_git(["rev-parse", "FETCH_HEAD"])
+                if fetch_head.returncode == 0 and fetch_head.stdout.strip():
+                    base_ref = fetch_head.stdout.strip()
+                else:
+                    remote_ref = f"{SYNC_STATE_REMOTE}/{SYNC_STATE_BRANCH}"
+                    ref_check = run_git(["rev-parse", "--verify", remote_ref])
+                    if ref_check.returncode == 0:
+                        base_ref = remote_ref
+                    else:
+                        print(f"⚠️ 未找到远端引用 {remote_ref}，将改为创建新分支")
+            except Exception as e:
+                print(f"⚠️ 拉取状态分支失败，将改为创建新分支：{e}")
+                base_ref = "HEAD"
 
         temp_dir = tempfile.mkdtemp(prefix="cnblogs-sync-state-")
-        if branch_exists:
-            run_git(
-                ["worktree", "add", "-B", SYNC_STATE_BRANCH, temp_dir, f"{SYNC_STATE_REMOTE}/{SYNC_STATE_BRANCH}"],
-                check=True
-            )
-        else:
-            run_git(["worktree", "add", "-B", SYNC_STATE_BRANCH, temp_dir, "HEAD"], check=True)
+        run_git(["worktree", "add", "-B", SYNC_STATE_BRANCH, temp_dir, base_ref], check=True)
 
         rel_paths = []
         for path in [SYNC_RECORD_FILE, SYNC_STATE_FILE, SYNC_RUN_LOG_FILE]:
@@ -250,23 +321,31 @@ def persist_state_to_git():
 
         if not rel_paths:
             print("ℹ️ 未找到可持久化的状态文件")
-            return True
+            return True, "无状态文件"
 
         status = run_git(["status", "--porcelain"], cwd=temp_dir)
         if not status.stdout.strip():
             print("ℹ️ 状态文件无变化，无需提交")
-            return True
+            return True, "无变化"
 
         run_git(["add"] + rel_paths, cwd=temp_dir, check=True)
         ensure_git_identity(temp_dir)
         commit_msg = f"chore: update cnblogs sync state ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
         run_git(["commit", "-m", commit_msg], cwd=temp_dir, check=True)
-        run_git(["push", SYNC_STATE_REMOTE, SYNC_STATE_BRANCH], cwd=temp_dir, check=True)
+        try:
+            run_git(["push", SYNC_STATE_REMOTE, SYNC_STATE_BRANCH], cwd=temp_dir, check=True)
+        except Exception as e:
+            msg = str(e)
+            if "non-fast-forward" in msg or "fetch first" in msg or "rejected" in msg:
+                print("⚠️ 推送被拒绝（non-fast-forward），改用 --force-with-lease 重试")
+                run_git(["push", "--force-with-lease", SYNC_STATE_REMOTE, SYNC_STATE_BRANCH], cwd=temp_dir, check=True)
+            else:
+                raise
         print(f"✅ 状态已推送到分支: {SYNC_STATE_BRANCH}")
-        return True
+        return True, f"已推送到分支: {SYNC_STATE_BRANCH}"
     except Exception as e:
         print(f"❌ 持久化状态失败: {e}")
-        return False
+        return False, "持久化失败"
     finally:
         if temp_dir:
             try:
@@ -293,6 +372,7 @@ def load_sync_state():
 def save_sync_state(state):
     """保存增量同步状态"""
     try:
+        SYNC_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(SYNC_STATE_FILE, 'w', encoding='utf-8') as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -313,6 +393,11 @@ def get_head_commit():
     if result.returncode == 0:
         return result.stdout.strip()
     return None
+
+def short_commit(commit: str | None) -> str:
+    if not commit:
+        return "无"
+    return commit[:8]
 
 def get_changed_markdown_files(last_commit, head_commit):
     """获取两次提交之间变更的 Markdown 文件"""
@@ -397,13 +482,14 @@ def load_sync_record():
 def save_sync_record(record):
     """保存本地发布记录"""
     try:
+        SYNC_RECORD_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(SYNC_RECORD_FILE, 'w', encoding='utf-8') as f:
             json.dump(record, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"⚠️ 保存发布记录文件时出错: {e}")
 
 def get_blog_id(server):
-    """自动获取 BLOG_ID（CNBLOGS_BLOG_ID）"""
+    """自动获取 BLOG_ID"""
     try:
         blogs = server.blogger.getUsersBlogs('', USERNAME, PASSWORD)
         if blogs and len(blogs) > 0:
@@ -428,7 +514,7 @@ def init_sync_record():
         if not BLOG_ID:
             BLOG_ID = get_blog_id(server)
             if not BLOG_ID:
-                print("❌ 错误：CNBLOGS_BLOG_ID 未设置且无法自动获取，请手动设置 CNBLOGS_BLOG_ID")
+                print("❌ 错误：无法自动获取 BLOG_ID，请检查账号权限与 RPC 配置")
                 return False
             print(f"✅ 自动获取到 BLOG_ID: {BLOG_ID}")
 
@@ -460,9 +546,11 @@ def init_sync_record():
         print(f"❌ 初始化发布记录时出错: {e}")
         return False
 
-def post_to_cnblogs(title, content, categories=None):
-    """发布文章到博客园，基于本地记录判断是否已存在
-    返回 True 表示成功发布/更新，False 表示跳过或失败"""
+PostResult = Literal["created", "updated", "skipped", "failed"]
+
+
+def post_to_cnblogs(title, content, categories=None) -> PostResult:
+    """发布文章到博客园，基于本地记录判断是否已存在"""
     # --- 步骤1: 准备最终内容 ---
 
     # 核心修改：不再对标题进行 URL 编码
@@ -506,13 +594,13 @@ def post_to_cnblogs(title, content, categories=None):
                     # 确保记录中的 post_id 是最新的（虽然通常不会变）
                     sync_record[title] = existing_post_id
                     save_sync_record(sync_record)
-                    return True  # 成功更新
+                    return "updated"
                 else:
                     print(f"❌ 更新文章 '{title}' 失败")
-                    return False  # 更新失败
+                    return "failed"
             else:
                 print(f"ℹ️ 本地记录显示文章 '{title}' 已存在（Post ID: {existing_post_id}），跳过发布")
-                return False  # 跳过，不算成功发布
+                return "skipped"
         else:
             print(f"📄 文章 '{title}' 不在本地记录中，将创建新文章")
             new_post_id = server.metaWeblog.newPost(BLOG_ID, USERNAME, PASSWORD, post_data, post_data['publish'])
@@ -521,13 +609,13 @@ def post_to_cnblogs(title, content, categories=None):
             # 更新本地记录（始终更新）
             sync_record[title] = new_post_id
             save_sync_record(sync_record)
-            return True  # 成功发布
+            return "created"
 
     except Exception as e:
         print(f"❌ 发布或更新文章 '{title}' 时发生严重错误: {e}")
-        return False  # 发布失败
+        return "failed"
 
-# --- 主逻辑 ---
+# --- 主流程 ---
 if __name__ == "__main__":
     run_started_ts = time.time()
     missing_vars = []
@@ -536,19 +624,37 @@ if __name__ == "__main__":
     if not USERNAME:
         missing_vars.append("CNBLOGS_USERNAME")
     if not PASSWORD:
-        missing_vars.append("CNBLOGS_TOKEN / CNBLOGS_PASSWORD")
-    
+        missing_vars.append("CNBLOGS_TOKEN")
+    if not SYNC_REPO_URL:
+        missing_vars.append("SYNC_REPO_URL")
+    if not SYNC_REPO_TOKEN:
+        missing_vars.append("SYNC_REPO_TOKEN")
+
     if missing_vars:
-        print("❌ 错误：以下环境变量未设置：")
+        print("❌ 环境变量缺失，无法继续：")
         for var in missing_vars:
-            print(f"   - {var}")
-        print("\n💡 请创建 .env 文件并设置这些变量，或通过环境变量直接设置。")
+            print(f"  - {var}")
+        print("请检查 .env 或系统环境变量后再运行。")
         sys.exit(1)
 
-    # 如果开启 Git 状态持久化，先尝试恢复状态文件
-    restore_state_from_git()
+    log_plan()
+    step_status = ["未开始"] * len(SYNC_STEPS)
 
-    # BLOG_ID 可选：未设置则尝试自动获取
+    def set_status(step_index: int, status: str, detail: str | None = None) -> None:
+        if detail:
+            step_status[step_index - 1] = f"{status}：{detail}"
+        else:
+            step_status[step_index - 1] = status
+
+    def print_summary() -> None:
+        print("\n执行结果：")
+        for i, title in enumerate(SYNC_STEPS, 1):
+            print(f"  {i}. {title} -> {step_status[i - 1]}")
+
+    # Step 1: prepare & restore
+    step = 1
+    log_step_start(step)
+    restore_detail = restore_state_from_git()
     if not BLOG_ID:
         try:
             server = xmlrpc.client.ServerProxy(RPC_URL)
@@ -556,34 +662,51 @@ if __name__ == "__main__":
             if BLOG_ID:
                 print(f"✅ 自动获取到 BLOG_ID: {BLOG_ID}")
             else:
-                print("❌ 错误：CNBLOGS_BLOG_ID 未设置且无法自动获取，请手动设置 CNBLOGS_BLOG_ID")
+                log_step_fail(step, "无法自动获取 BLOG_ID")
+                set_status(step, "失败", "BLOG_ID 获取失败")
+                print_summary()
                 sys.exit(1)
         except Exception as e:
-            print(f"❌ 自动获取 BLOG_ID 失败: {e}")
+            log_step_fail(step, f"获取 BLOG_ID 失败: {e}")
+            set_status(step, "失败", "BLOG_ID 获取异常")
+            print_summary()
             sys.exit(1)
+    step1_detail = f"状态恢复={restore_detail}，BLOG_ID={BLOG_ID}"
+    log_step_ok(step, step1_detail)
+    set_status(step, "成功", step1_detail)
 
-    # 自动初始化：没有发布记录时先生成（避免重复创建文章）
+    # Step 2: init record
+    step = 2
+    log_step_start(step)
     if not SYNC_RECORD_FILE.exists():
-        print("ℹ️ 未发现发布记录，开始自动初始化...")
+        print("  - 发布记录不存在，开始初始化")
         ok = init_sync_record()
         if not ok:
+            log_step_fail(step, "初始化发布记录失败")
+            set_status(step, "失败", "初始化失败")
+            print_summary()
             sys.exit(1)
-        if not persist_state_to_git():
-            sys.exit(2)
+        record_count = len(load_sync_record() or {})
+        record_detail = f"记录数={record_count}"
+        log_step_ok(step, record_detail)
+        set_status(step, "成功", record_detail)
+    else:
+        log_step_skip(step, "发布记录已存在")
+        set_status(step, "跳过", "发布记录已存在")
 
-    # 读取增量同步状态
+    # Step 3: build publish list
+    step = 3
+    log_step_start(step)
     sync_state = load_sync_state()
     head_commit = get_head_commit()
     last_synced_commit = sync_state.get("last_synced_commit")
+    head_short = short_commit(head_commit)
+    last_short = short_commit(last_synced_commit)
 
-    # 确定要发布的文件列表
     run_mode = "full"
-    manual_mode = len(sys.argv) > 1
-
     if len(sys.argv) > 1:
-        # 手动模式：使用命令行参数指定的文件
         files_to_publish = sys.argv[1:]
-        print(f"📝 手动模式：准备发布 {len(files_to_publish)} 个指定文件")
+        print(f"  - 手动模式：指定 {len(files_to_publish)} 个文件")
         run_mode = "manual"
     else:
         files_to_publish = None
@@ -592,92 +715,133 @@ if __name__ == "__main__":
             if changed_files is not None:
                 files_to_publish = changed_files
                 run_mode = "incremental"
-                print(f"🧩 增量模式：找到 {len(files_to_publish)} 个变更 Markdown 文件")
+                print(f"  - 增量对比：{last_short}..{head_short}，变更 {len(files_to_publish)} 个 Markdown 文件")
+            else:
+                print("  - 增量差异获取失败，改为全量扫描")
 
         if files_to_publish is None:
-            # 自动模式：扫描仓库中所有 Markdown 文件
             files_to_publish = find_all_markdown_files()
             if not files_to_publish:
-                print("⚠️ 未找到任何 Markdown 文件")
+                log_step_ok(step, "未找到 Markdown 文件")
+                set_status(step, "跳过", "未找到 Markdown 文件")
+                print_summary()
                 sys.exit(0)
-            print(f"🤖 全量模式：找到 {len(files_to_publish)} 个 Markdown 文件，准备发布")
+            print(f"  - 全量扫描：共 {len(files_to_publish)} 个 Markdown 文件")
 
-    print()
+    list_detail = f"模式={run_mode}，候选={len(files_to_publish)}"
+    if run_mode != "manual":
+        list_detail += f"，last={last_short}，head={head_short}"
+    log_step_ok(step, list_detail)
+    set_status(step, "成功", list_detail)
 
-    # 增量模式且没有变更时，直接更新状态并退出
+    # Step 4: publish
+    step = 4
+    log_step_start(step)
     if run_mode == "incremental" and not files_to_publish:
-        print("ℹ️ 未检测到 Markdown 变更，跳过发布")
+        step4_detail = "无变更"
+        log_step_skip(step, step4_detail)
+        set_status(step, "跳过", step4_detail)
+
         if head_commit:
             sync_state["last_synced_commit"] = head_commit
         sync_state["last_run_at"] = datetime.now().isoformat(timespec="seconds")
         sync_state["last_run_mode"] = run_mode
         sync_state["last_total_candidates"] = 0
         sync_state["last_published_count"] = 0
+        sync_state["last_skipped_count"] = 0
+        sync_state["last_failed_count"] = 0
         save_sync_state(sync_state)
         log_entry = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": run_mode,
             "candidates": 0,
             "published": 0,
+            "skipped": 0,
+            "failed": 0,
             "status": "no_change",
             "duration_s": int(time.time() - run_started_ts)
         }
         if head_commit:
             log_entry["head_commit"] = head_commit
         append_run_log(log_entry)
-        if not persist_state_to_git():
+
+        step = 5
+        log_step_start(step)
+        persist_ok, persist_detail = persist_state_to_git()
+        if not persist_ok:
+            log_step_fail(step, persist_detail)
+            set_status(step, "失败", persist_detail)
+            print_summary()
             sys.exit(2)
+        log_step_ok(step, persist_detail)
+        set_status(step, "成功", persist_detail)
+        print_summary()
         sys.exit(0)
 
-    # 限流配置：基于成功发布的文章数
-    SUCCESS_BATCH_SIZE_SMALL = 5  # 每成功发布5篇休息
-    SUCCESS_REST_SECONDS_SMALL = 3  # 休息3秒
-    
-    SUCCESS_BATCH_SIZE_LARGE = 20  # 每成功发布20篇休息
-    SUCCESS_REST_SECONDS_LARGE = 10  # 休息10秒
-    
-    success_count = 0  # 成功发布的计数器
-    
+    SUCCESS_BATCH_SIZE_SMALL = 5
+    SUCCESS_REST_SECONDS_SMALL = 3
+    SUCCESS_BATCH_SIZE_LARGE = 20
+    SUCCESS_REST_SECONDS_LARGE = 10
+
+    success_count = 0
+    skipped_count = 0
+    failed_count = 0
+    missing_count = 0
+
     for idx, md_file in enumerate(files_to_publish, 1):
         if not os.path.exists(md_file):
-            print(f"⚠️ 文件 '{md_file}' 不存在，跳过。")
+            print(f"⚠️ 文件不存在，跳过: '{md_file}'")
+            failed_count += 1
+            missing_count += 1
             continue
 
         print(f"\n[{idx}/{len(files_to_publish)}] 处理文件: {md_file}")
         post_title = os.path.basename(md_file).replace('.md', '')
         post_content = get_file_content(md_file)
 
-        success = post_to_cnblogs(post_title, post_content)
-        
-        # 如果成功发布，增加成功计数器
-        if success:
-            success_count += 1
-            
-            # 每成功发布 5 篇后休息 3 秒
-            if success_count % SUCCESS_BATCH_SIZE_SMALL == 0:
-                print(f"\n⏸️  已成功发布 {success_count} 篇文章，休息 {SUCCESS_REST_SECONDS_SMALL} 秒...")
-                time.sleep(SUCCESS_REST_SECONDS_SMALL)
-                print("▶️  继续发布...\n")
-            
-            # 每成功发布 20 篇后休息 10 秒
-            if success_count % SUCCESS_BATCH_SIZE_LARGE == 0:
-                print(f"\n⏸️  已成功发布 {success_count} 篇文章，休息 {SUCCESS_REST_SECONDS_LARGE} 秒...")
-                time.sleep(SUCCESS_REST_SECONDS_LARGE)
-                print("▶️  继续发布...\n")
+        result = post_to_cnblogs(post_title, post_content)
 
-    # 运行结束后更新状态（手动模式不更新 last_synced_commit）
+        if result in {"created", "updated"}:
+            success_count += 1
+            if success_count % SUCCESS_BATCH_SIZE_SMALL == 0:
+                print(f"\n⏳ 已处理 {success_count} 篇，休息 {SUCCESS_REST_SECONDS_SMALL}s...")
+                time.sleep(SUCCESS_REST_SECONDS_SMALL)
+                print("✅ 继续同步...\n")
+
+            if success_count % SUCCESS_BATCH_SIZE_LARGE == 0:
+                print(f"\n⏳ 已处理 {success_count} 篇，休息 {SUCCESS_REST_SECONDS_LARGE}s...")
+                time.sleep(SUCCESS_REST_SECONDS_LARGE)
+                print("✅ 继续同步...\n")
+        elif result == "skipped":
+            skipped_count += 1
+        else:
+            failed_count += 1
+
+    step4_detail = (
+        f"成功={success_count}，跳过={skipped_count}，失败={failed_count}，总计={len(files_to_publish)}"
+    )
+    if missing_count:
+        step4_detail += f"，缺失={missing_count}"
+    log_step_ok(step, step4_detail)
+    step4_status = "成功" if failed_count == 0 else "部分失败"
+    set_status(step, step4_status, step4_detail)
+
     if run_mode != "manual" and head_commit:
         sync_state["last_synced_commit"] = head_commit
     sync_state["last_run_at"] = datetime.now().isoformat(timespec="seconds")
     sync_state["last_run_mode"] = run_mode
     sync_state["last_total_candidates"] = len(files_to_publish)
     sync_state["last_published_count"] = success_count
+    sync_state["last_skipped_count"] = skipped_count
+    sync_state["last_failed_count"] = failed_count
     save_sync_state(sync_state)
     log_entry = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "mode": run_mode,
         "candidates": len(files_to_publish),
         "published": success_count,
+        "skipped": skipped_count,
+        "failed": failed_count,
         "status": "completed",
         "duration_s": int(time.time() - run_started_ts)
     }
@@ -685,5 +849,15 @@ if __name__ == "__main__":
         log_entry["head_commit"] = head_commit
     append_run_log(log_entry)
 
-    if not persist_state_to_git():
+    step = 5
+    log_step_start(step)
+    persist_ok, persist_detail = persist_state_to_git()
+    if not persist_ok:
+        log_step_fail(step, persist_detail)
+        set_status(step, "失败", persist_detail)
+        print_summary()
         sys.exit(2)
+    log_step_ok(step, persist_detail)
+    set_status(step, "成功", persist_detail)
+
+    print_summary()

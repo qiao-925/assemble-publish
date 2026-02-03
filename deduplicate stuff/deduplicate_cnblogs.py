@@ -26,13 +26,13 @@ if sys.platform == 'win32':
 # --- 配置信息 ---
 RPC_URL = os.getenv("CNBLOGS_RPC_URL")
 USERNAME = os.getenv("CNBLOGS_USERNAME")
-TOKEN = os.getenv("CNBLOGS_TOKEN") or os.getenv("CNBLOGS_PASSWORD")
+TOKEN = os.getenv("CNBLOGS_TOKEN")
 # BLOG_ID 可以从环境变量读取，如果没有则通过 API 自动获取
-BLOG_ID = os.getenv("CNBLOGS_BLOG_ID")
+BLOG_ID = None  # 自动获取
 
 # 可选：同步脚本的发布记录文件（用于去重后修正本地记录，避免 record 指向被删的 post_id）
-REPO_ROOT = Path(os.getenv("SYNC_REPO_ROOT", Path.cwd())).resolve()
-SYNC_RECORD_PATH = os.getenv("SYNC_RECORD_PATH", ".cnblogs_sync/.cnblogs_sync_record.json")
+REPO_ROOT = Path.cwd().resolve()
+SYNC_RECORD_PATH = ".cnblogs_sync/.cnblogs_sync_record.json"
 SYNC_RECORD_FILE = Path(SYNC_RECORD_PATH)
 if not SYNC_RECORD_FILE.is_absolute():
     SYNC_RECORD_FILE = (REPO_ROOT / SYNC_RECORD_FILE).resolve()
@@ -360,7 +360,7 @@ def deduplicate_posts():
     if not USERNAME:
         missing_vars.append("CNBLOGS_USERNAME")
     if not TOKEN:
-        missing_vars.append("CNBLOGS_TOKEN / CNBLOGS_PASSWORD")
+        missing_vars.append("CNBLOGS_TOKEN")
     
     if missing_vars:
         print("❌ 错误：以下环境变量未设置：")
