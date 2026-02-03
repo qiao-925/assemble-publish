@@ -10,32 +10,29 @@
 #   - CNBLOGS_RPC_URL: 博客园 RPC 地址（必需）
 #   - CNBLOGS_BLOG_ID: 博客 ID（可选，未设置时会自动获取）
 #   - CNBLOGS_USERNAME: 用户名（必需）
-#   - CNBLOGS_PASSWORD: 密码或 Token（必需；也可用 CNBLOGS_TOKEN 代替）
-#   - CNBLOGS_TOKEN: Token（可选；作为 CNBLOGS_PASSWORD 的别名）
+#   - CNBLOGS_TOKEN: Token（必需；兼容 CNBLOGS_PASSWORD）
+#   - CNBLOGS_PASSWORD: 密码（可选；作为 CNBLOGS_TOKEN 的别名）
 #   - KNOWLEDGE_BASE_URL: 知识库基础 URL（可选，默认：https://assemble.gitbook.io/assemble）
 #   - CNBLOGS_SEARCH_URL: 博客园站内搜索 URL（可选，默认：https://zzk.cnblogs.com/my/s/blogpost-p）
 #   - INCREMENTAL_SYNC: 是否启用增量同步（默认 True）
-#   - SYNC_STATE_GIT: 是否将状态写回 Git 分支（默认 False）
+#   - SYNC_STATE_GIT: 是否将状态写回 Git 分支（默认 True）
 #   - SYNC_STATE_BRANCH: 状态分支名（默认 sync-state）
 #   - SYNC_STATE_REMOTE: 远端名（默认 origin）
 #   - SYNC_STATE_REMOTE_URL: 远端地址（可选，用于写回 PAT URL）
 #   - SYNC_REPO_ROOT: 目标仓库根目录（可选）
 #   - SYNC_RECORD_PATH: 记录文件相对仓库路径（可选）
 #   - SYNC_STATE_PATH: 状态文件相对仓库路径（可选）
+#   - SYNC_RUN_LOG_PATH: 运行记录文件相对仓库路径（可选）
 #
 # 【使用方法】
 #
-# 1. 首次使用 - 初始化发布记录（必须）：
-#    python cnblogs_sync/sync_to_cnblogs.py --init
-#    说明：从 API 获取最近 300 篇文章的标题和 post_id，保存到本地 JSON 文件
-#          用于后续发布时的去重判断（不受 API 300 篇限制）
-#
-# 2. 发布文章到博客园：
+# 1. 发布文章到博客园（首次运行会自动初始化发布记录）：
 #    a) 自动模式（推荐）：不指定文件，自动扫描仓库中所有 .md 文件
 #       python cnblogs_sync/sync_to_cnblogs.py
 #    b) 手动模式：指定要发布的文件
 #       python cnblogs_sync/sync_to_cnblogs.py <file1.md> [file2.md] ...
 #    说明：将 Markdown 文件发布到博客园
+#          - 若发布记录不存在，会自动从 API 获取最近 300 篇文章生成记录
 #          - 如果文章已在本地记录中（已发布过），根据 FORCE_OVERWRITE_EXISTING 开关决定是否更新
 #          - 如果是新文章，直接发布并自动更新本地记录
 #          - 自动模式会排除 .git、.github、node_modules、cnblogs_sync 等目录
@@ -70,7 +67,7 @@ load_dotenv()
 RPC_URL = os.getenv("CNBLOGS_RPC_URL")
 BLOG_ID = os.getenv("CNBLOGS_BLOG_ID")
 USERNAME = os.getenv("CNBLOGS_USERNAME")
-PASSWORD = os.getenv("CNBLOGS_PASSWORD") or os.getenv("CNBLOGS_TOKEN")
+PASSWORD = os.getenv("CNBLOGS_TOKEN") or os.getenv("CNBLOGS_PASSWORD")
 # 知识库和博客园搜索 URL 配置
 KNOWLEDGE_BASE_URL = os.getenv("KNOWLEDGE_BASE_URL", "https://assemble.gitbook.io/assemble")
 CNBLOGS_SEARCH_URL = os.getenv("CNBLOGS_SEARCH_URL", "https://zzk.cnblogs.com/my/s/blogpost-p")
@@ -94,6 +91,10 @@ SYNC_STATE_PATH = os.getenv(
     "SYNC_STATE_PATH",
     ".cnblogs_sync/state.json"
 )
+SYNC_RUN_LOG_PATH = os.getenv(
+    "SYNC_RUN_LOG_PATH",
+    ".cnblogs_sync/run_history.jsonl"
+)
 
 def resolve_repo_path(path_str):
     """将路径解析为仓库内绝对路径（支持绝对路径）"""
@@ -104,10 +105,12 @@ def resolve_repo_path(path_str):
 SYNC_RECORD_FILE = resolve_repo_path(SYNC_RECORD_PATH)
 # --- 本地状态文件路径（用于增量同步） ---
 SYNC_STATE_FILE = resolve_repo_path(SYNC_STATE_PATH)
+# --- 本地运行记录文件路径 ---
+SYNC_RUN_LOG_FILE = resolve_repo_path(SYNC_RUN_LOG_PATH)
 
 # --- 增量同步与 Git 持久化配置 ---
 INCREMENTAL_SYNC = os.getenv("INCREMENTAL_SYNC", "true").lower() in {"1", "true", "yes", "y"}
-SYNC_STATE_GIT = os.getenv("SYNC_STATE_GIT", "false").lower() in {"1", "true", "yes", "y"}
+SYNC_STATE_GIT = os.getenv("SYNC_STATE_GIT", "true").lower() in {"1", "true", "yes", "y"}
 SYNC_STATE_BRANCH = os.getenv("SYNC_STATE_BRANCH", "sync-state")
 SYNC_STATE_REMOTE = os.getenv("SYNC_STATE_REMOTE", "origin")
 SYNC_STATE_REMOTE_URL = os.getenv("SYNC_STATE_REMOTE_URL")
@@ -183,14 +186,14 @@ def restore_state_from_git():
     try:
         ensure_remote(SYNC_STATE_REMOTE, SYNC_STATE_REMOTE_URL)
         if not has_remote(SYNC_STATE_REMOTE):
-            print(f"⚠️ 未找到 remote '{SYNC_STATE_REMOTE}'，请设置 SYNC_STATE_REMOTE_URL")
+            print(f"⚠️ 未找到 remote '{SYNC_STATE_REMOTE}'，请设置 SYNC_STATE_REMOTE_URL（带 PAT）或仅本地测试时设置 SYNC_STATE_GIT=false")
             return
         run_git(["fetch", SYNC_STATE_REMOTE, SYNC_STATE_BRANCH], check=True)
     except Exception as e:
         print(f"⚠️ 拉取分支失败，跳过状态恢复：{e}")
         return
 
-    for path in [SYNC_RECORD_FILE, SYNC_STATE_FILE]:
+    for path in [SYNC_RECORD_FILE, SYNC_STATE_FILE, SYNC_RUN_LOG_FILE]:
         try:
             rel_path = path.relative_to(REPO_ROOT).as_posix()
         except ValueError:
@@ -216,7 +219,7 @@ def persist_state_to_git():
     try:
         ensure_remote(SYNC_STATE_REMOTE, SYNC_STATE_REMOTE_URL)
         if not has_remote(SYNC_STATE_REMOTE):
-            print(f"⚠️ 未找到 remote '{SYNC_STATE_REMOTE}'，请设置 SYNC_STATE_REMOTE_URL")
+            print(f"⚠️ 未找到 remote '{SYNC_STATE_REMOTE}'，请设置 SYNC_STATE_REMOTE_URL（带 PAT）或仅本地测试时设置 SYNC_STATE_GIT=false")
             return False
         branch_exists = remote_branch_exists(SYNC_STATE_REMOTE, SYNC_STATE_BRANCH)
         if branch_exists:
@@ -232,7 +235,7 @@ def persist_state_to_git():
             run_git(["worktree", "add", "-B", SYNC_STATE_BRANCH, temp_dir, "HEAD"], check=True)
 
         rel_paths = []
-        for path in [SYNC_RECORD_FILE, SYNC_STATE_FILE]:
+        for path in [SYNC_RECORD_FILE, SYNC_STATE_FILE, SYNC_RUN_LOG_FILE]:
             if not path.exists():
                 continue
             try:
@@ -294,6 +297,15 @@ def save_sync_state(state):
             json.dump(state, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"⚠️ 保存状态文件时出错: {e}")
+
+def append_run_log(entry):
+    """追加一行运行记录（JSONL）"""
+    try:
+        SYNC_RUN_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(SYNC_RUN_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"⚠️ 写入运行记录失败: {e}")
 
 def get_head_commit():
     """获取当前 HEAD commit"""
@@ -517,13 +529,14 @@ def post_to_cnblogs(title, content, categories=None):
 
 # --- 主逻辑 ---
 if __name__ == "__main__":
+    run_started_ts = time.time()
     missing_vars = []
     if not RPC_URL:
         missing_vars.append("CNBLOGS_RPC_URL")
     if not USERNAME:
         missing_vars.append("CNBLOGS_USERNAME")
     if not PASSWORD:
-        missing_vars.append("CNBLOGS_PASSWORD / CNBLOGS_TOKEN")
+        missing_vars.append("CNBLOGS_TOKEN / CNBLOGS_PASSWORD")
     
     if missing_vars:
         print("❌ 错误：以下环境变量未设置：")
@@ -549,22 +562,14 @@ if __name__ == "__main__":
             print(f"❌ 自动获取 BLOG_ID 失败: {e}")
             sys.exit(1)
 
-    # 检查是否需要初始化记录
-    if len(sys.argv) > 1 and sys.argv[1] == '--init':
+    # 自动初始化：没有发布记录时先生成（避免重复创建文章）
+    if not SYNC_RECORD_FILE.exists():
+        print("ℹ️ 未发现发布记录，开始自动初始化...")
         ok = init_sync_record()
         if not ok:
             sys.exit(1)
         if not persist_state_to_git():
             sys.exit(2)
-        sys.exit(0)
-
-    # 安全保护：没有发布记录时，禁止继续（避免重复创建文章）
-    if not SYNC_RECORD_FILE.exists():
-        print("❌ 未找到发布记录文件，已中止以避免重复发布。")
-        print(f"   - 期望路径: {SYNC_RECORD_FILE}")
-        print("💡 解决办法：先运行一次初始化：")
-        print(f"   python \"{Path(__file__).resolve()}\" --init")
-        sys.exit(1)
 
     # 读取增量同步状态
     sync_state = load_sync_state()
@@ -609,6 +614,17 @@ if __name__ == "__main__":
         sync_state["last_total_candidates"] = 0
         sync_state["last_published_count"] = 0
         save_sync_state(sync_state)
+        log_entry = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "mode": run_mode,
+            "candidates": 0,
+            "published": 0,
+            "status": "no_change",
+            "duration_s": int(time.time() - run_started_ts)
+        }
+        if head_commit:
+            log_entry["head_commit"] = head_commit
+        append_run_log(log_entry)
         if not persist_state_to_git():
             sys.exit(2)
         sys.exit(0)
@@ -657,6 +673,17 @@ if __name__ == "__main__":
     sync_state["last_total_candidates"] = len(files_to_publish)
     sync_state["last_published_count"] = success_count
     save_sync_state(sync_state)
+    log_entry = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "mode": run_mode,
+        "candidates": len(files_to_publish),
+        "published": success_count,
+        "status": "completed",
+        "duration_s": int(time.time() - run_started_ts)
+    }
+    if head_commit:
+        log_entry["head_commit"] = head_commit
+    append_run_log(log_entry)
 
     if not persist_state_to_git():
         sys.exit(2)

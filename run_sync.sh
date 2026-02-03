@@ -2,16 +2,16 @@
 set -euo pipefail
 
 # 运行方式（示例）：
-#   # 首次初始化
-#   ./run_sync.sh --init
-#
-#   # 正常同步
+#   # 同步（首次运行会自动初始化发布记录）
 #   ./run_sync.sh
 #
 # 需要的环境变量：
+#   CNBLOGS_RPC_URL         博客园 RPC 地址
+#   CNBLOGS_USERNAME        博客园用户名
+#   CNBLOGS_TOKEN           博客园 Token（兼容 CNBLOGS_PASSWORD）
 #   SYNC_REPO_URL           主仓库地址（建议用带 PAT 的 HTTPS；私有仓库必须）
 # 可选：
-#   SYNC_REPO_BRANCH        默认 main
+#   SYNC_REPO_BRANCH        默认 main（示例中可设为 sync-state）
 #   SYNC_REPO_DEPTH         默认 50；设为 0 表示完整克隆
 #   WORKDIR                默认 /tmp/assemble-main-repo（如果 WORKDIR 可持久化，则可复用以避免每次 clone）
 #   PYTHON_BIN             默认 python3（不存在则回退 python）
@@ -88,4 +88,14 @@ if [ "$INSTALL_DEPS" = "true" ]; then
 fi
 
 # 运行同步脚本（脚本在本仓库；内容/状态在主仓库）
-"$PYTHON_BIN" "$SCRIPT_DIR/cnblogs_sync/sync_to_cnblogs.py" "$@"
+# 同步脚本内部会自动初始化发布记录（若缺失）
+args=()
+for arg in "$@"; do
+  if [ "$arg" = "--init" ]; then
+    echo "ℹ️  已忽略 --init：脚本会自动初始化发布记录"
+    continue
+  fi
+  args+=("$arg")
+done
+
+"$PYTHON_BIN" "$SCRIPT_DIR/cnblogs_sync/sync_to_cnblogs.py" "${args[@]}"
