@@ -11,9 +11,7 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-
 ENV PYTHONUNBUFFERED=1
 
-# 默认执行主仓库同步入口；Zeabur Cron 可直接复�?
-
-CMD ["python", "./run_sync.py"]
+# 默认常驻整点同步入口；也可在 Zeabur Start Command 覆盖
+CMD ["python", "./run_sync_hourly.py"]
