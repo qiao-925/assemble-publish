@@ -9,3 +9,9 @@ __pycache__/
 
 # Claude Code 配置
 .claude/
+
+# Codex / VSCode ??
+.codex/
+.vscode/
+.agents/
+.opencode/

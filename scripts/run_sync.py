@@ -11,6 +11,7 @@ from urllib.parse import quote, urlparse, urlunparse
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
 DEFAULT_SYNC_REPO_BRANCH = "main"
 DEFAULT_SYNC_REPO_DEPTH = 50
 DEFAULT_WORKDIR = Path(tempfile.gettempdir()) / "assemble-main-repo"
@@ -20,6 +21,7 @@ RUN_STEPS = [
     "拉取/更新主仓库",
     "安装依赖",
     "执行同步脚本",
+    "同步后去重处理",
 ]
 
 
@@ -49,8 +51,12 @@ def parse_env_file(path: Path) -> dict[str, str]:
 
 
 def load_env_defaults() -> None:
-    env_file = SCRIPT_DIR / ".env"
-    if not env_file.is_file():
+    env_file_candidates = [
+        REPO_ROOT / ".env",
+        SCRIPT_DIR / ".env",
+    ]
+    env_file = next((p for p in env_file_candidates if p.is_file()), None)
+    if not env_file:
         return
     for key, value in parse_env_file(env_file).items():
         os.environ.setdefault(key, value)
@@ -74,6 +80,13 @@ def run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = No
         text=True,
         capture_output=capture,
     )
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def ensure_git() -> None:
@@ -149,6 +162,14 @@ def log_step_ok(step_index: int, detail: str | None = None) -> None:
 def log_step_fail(step_index: int, error: str) -> None:
     title = RUN_STEPS[step_index - 1] if step_index else "未知步骤"
     print(f"❌ {title} 失败：{error}")
+
+
+def log_step_skip(step_index: int, detail: str | None = None) -> None:
+    title = RUN_STEPS[step_index - 1]
+    if detail:
+        print(f"⏭️ {title}：{detail}")
+    else:
+        print(f"⏭️ {title} 跳过")
 
 
 def main() -> int:
@@ -266,7 +287,13 @@ def main() -> int:
         step_index = 3
         log_step_start(step_index)
         if INSTALL_DEPS:
-            req_file = SCRIPT_DIR / "requirements.txt"
+            req_file_candidates = [
+                REPO_ROOT / "requirements.txt",
+                SCRIPT_DIR / "requirements.txt",
+            ]
+            req_file = next((p for p in req_file_candidates if p.is_file()), None)
+            if not req_file:
+                raise FileNotFoundError("requirements.txt not found")
             run(
                 [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-r", str(req_file)],
                 env=env,
@@ -288,6 +315,8 @@ def main() -> int:
             args.append(arg)
 
         sync_script_candidates = [
+            REPO_ROOT / "src" / "assemble_publish" / "sync_to_cnblogs.py",
+            REPO_ROOT / "sync_to_cnblogs.py",
             SCRIPT_DIR / "sync_to_cnblogs.py",
             SCRIPT_DIR / "cnblogs_sync" / "sync_to_cnblogs.py",
         ]
@@ -299,6 +328,33 @@ def main() -> int:
         sync_detail = f"参数={args_display}"
         log_step_ok(step_index, sync_detail)
         set_status(step_index, "成功", sync_detail)
+
+        # Step 5: post-sync dedup
+        step_index = 5
+        log_step_start(step_index)
+        if not env_flag("POST_DEDUP", False):
+            log_step_skip(step_index, "未启用 POST_DEDUP")
+            set_status(step_index, "跳过", "未启用 POST_DEDUP")
+        else:
+            dedup_script = REPO_ROOT / "tools" / "deduplicate_cnblogs.py"
+            if not dedup_script.is_file():
+                raise FileNotFoundError("未找到去重脚本：tools/deduplicate_cnblogs.py")
+
+            dedup_env = env.copy()
+            post_to_dedup = {
+                "POST_DEDUP_DRY_RUN": "DEDUP_DRY_RUN",
+                "POST_DEDUP_KEEP_LATEST": "DEDUP_KEEP_LATEST",
+                "POST_DEDUP_DELETE_DELAY": "DEDUP_DELETE_DELAY",
+                "POST_DEDUP_SHOW_DETAILS": "DEDUP_SHOW_DETAILS",
+                "POST_DEDUP_MAX_ROUNDS": "DEDUP_MAX_ROUNDS",
+            }
+            for src_key, dest_key in post_to_dedup.items():
+                if src_key in dedup_env:
+                    dedup_env.setdefault(dest_key, dedup_env[src_key])
+
+            run([sys.executable, str(dedup_script)], cwd=workdir_path, env=dedup_env)
+            log_step_ok(step_index, "去重完成")
+            set_status(step_index, "成功", "去重完成")
 
         print("\n✅ 全部步骤执行完成")
         print_summary()

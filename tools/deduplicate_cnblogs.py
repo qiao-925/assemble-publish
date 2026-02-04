@@ -63,11 +63,32 @@ def save_sync_record(record):
         print(f"⚠️ 写入发布记录文件失败: {SYNC_RECORD_FILE} ({e})")
         return False
 
+def env_bool(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = raw.strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 # --- 配置选项 ---
-KEEP_LATEST = True  # True: 保留最新的，删除旧的；False: 保留最早的，删除新的
-DRY_RUN = False  # True: 只显示将要删除的文章，不实际删除；False: 实际执行删除
-SHOW_DETAILS = False  # True: 显示详细的处理过程；False: 只显示统计和列表
-DELETE_DELAY = 0  # 删除操作之间的延迟（秒），0 表示无延迟
+KEEP_LATEST = env_bool("DEDUP_KEEP_LATEST", True)  # True: 保留最新的，删除旧的；False: 保留最早的，删除新的
+DRY_RUN = env_bool("DEDUP_DRY_RUN", False)  # True: 只显示将要删除的文章，不实际删除；False: 实际执行删除
+SHOW_DETAILS = env_bool("DEDUP_SHOW_DETAILS", False)  # True: 显示详细的处理过程；False: 只显示统计和列表
+DELETE_DELAY = env_int("DEDUP_DELETE_DELAY", 0)  # 删除操作之间的延迟（秒），0 表示无延迟
+MAX_ROUNDS = env_int("DEDUP_MAX_ROUNDS", 50)
 
 def get_blog_id(server):
     """通过 API 获取博客ID"""
@@ -383,7 +404,7 @@ def deduplicate_posts():
         
         # 迭代模式：循环执行直到没有重复文章
         round_num = 1
-        max_rounds = 50  # 防止无限循环
+        max_rounds = MAX_ROUNDS  # 防止无限循环
         
         while round_num <= max_rounds:
             print("=" * 80)

@@ -13,5 +13,5 @@ COPY . .
 
 ENV PYTHONUNBUFFERED=1
 
-# 默认常驻整点同步入口；也可在 Zeabur Start Command 覆盖
-CMD ["python", "./run_sync_hourly.py"]
+# 默认常驻定时同步入口（每日 00:00/12:00）；也可在 Zeabur Start Command 覆盖
+CMD ["python", "./scripts/run_sync_hourly.py"]

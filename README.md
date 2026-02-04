@@ -1,5 +1,21 @@
 ﻿# assemble-publish
 
+## 命令清单
+
+```bash
+# 初始化环境变量文件
+cp .env.example .env
+
+# 本地执行同步（推荐入口）
+python scripts/run_sync.py
+
+# 常驻定时同步（每日 00:00 / 12:00）
+python scripts/run_sync_hourly.py
+
+# 去重工具（历史/手动运行）
+python tools/deduplicate_cnblogs.py
+```
+
 将 Markdown 仓库内容同步发布到博客园（MetaWeblog API）。
 
 本仓库提供同步脚本与部署入口：可本地执行，也可在容器/定时任务中自动拉取目标 Markdown 仓库并发布。
@@ -8,11 +24,9 @@
 
 - 单向同步：目标 Markdown 仓库 → 博客园
 - 去重与更新：基于本地发布记录判断是否已发布，支持强制覆盖更新
-- 增量同步：基于 Git commit 的差异（`last_synced_commit` → `HEAD`）只发布变更
-- 状态持久化：可将 `.cnblogs_sync` 状态写回 `sync-state` 分支
 - 自动处理：将文内本地 `.md` 链接替换为博客园站内搜索链接
 
-## 快速开始（本地执行，推荐用 run_sync.py）
+## 快速开始（本地执行，推荐用 scripts/run_sync.py）
 
 1. 准备环境变量（复制并修改）：
    ```bash
@@ -28,26 +42,26 @@
    ```
    说明：
    - 本仓库是“同步脚本仓库”，`SYNC_REPO_URL` 指向待发布的 Markdown 仓库（HTTPS URL）
-   - `SYNC_REPO_TOKEN` 用于推送 `sync-state` 分支（也可用于私有仓库拉取/推送）
+   - `SYNC_REPO_TOKEN` 用于私有仓库拉取/推送（HTTPS Token 或同等凭据）
    - 其他参数均使用默认值，无需配置
 2. 同步（首次运行会自动初始化发布记录）：
    ```bash
-   python run_sync.py
+   python scripts/run_sync.py
    ```
 
-## 整点定时同步（部署场景）
+## 定时同步（每日两次，部署场景）
 
-该脚本适合部署为**常驻进程/容器**：不依赖外部 Cron，等待到下一个整点后触发同步并每小时循环。
-部署启动后会**立即先跑一次**，随后进入整点循环。
+该脚本适合部署为**常驻进程/容器**：不依赖外部 Cron，等待到下一个定点触发同步并循环。
+部署启动后会**立即先跑一次**，随后在**每天 00:00 与 12:00**触发。
 
 ```bash
-python run_sync_hourly.py
+python scripts/run_sync_hourly.py
 ```
 
 部署建议：
-- 将 `run_sync_hourly.py` 作为服务启动命令（systemd / supervisor / 容器 CMD/ENTRYPOINT），保持进程常驻
-- 若平台自带 Cron/定时任务，建议直接定时执行 `python run_sync.py`（例如每小时）而无需常驻
-- “整点”按**部署机系统时区**计算，如需调整请在部署环境配置时区
+- 将 `scripts/run_sync_hourly.py` 作为服务启动命令（systemd / supervisor / 容器 CMD/ENTRYPOINT），保持进程常驻
+- 若平台自带 Cron/定时任务，建议直接定时执行 `python scripts/run_sync.py`（例如每天 00:00/12:00）而无需常驻
+- 触发时间按**部署机系统时区**计算，如需调整请在部署环境配置时区
 
 ## 运行机制简述
 
@@ -55,16 +69,25 @@ python run_sync_hourly.py
 - 发布时：
   - 若标题存在于发布记录中：根据 `FORCE_OVERWRITE_EXISTING` 决定更新或跳过
   - 若不存在：创建新文章并写入记录
-- 增量模式会仅发布 Git diff 的 Markdown 文件
+- 默认全量扫描并发布 Markdown 文件
+
+## 同步后自动去重（可选）
+
+若你的历史文章超过 300 篇，为避免重复，可在每次同步完成后自动执行去重脚本：
+
+- 在 `.env` 中设置 `POST_DEDUP=true`
+- 可选参数：`DEDUP_DRY_RUN`、`DEDUP_KEEP_LATEST`、`DEDUP_DELETE_DELAY`、`DEDUP_SHOW_DETAILS`、`DEDUP_MAX_ROUNDS`
+
+注意：去重会删除博客园上的重复文章，建议先设置 `DEDUP_DRY_RUN=true` 观察输出。
 
 ## 去重工具（历史）
 
 如需处理历史遗留的重复文章，可使用去重工具：
 
-- `deduplicate_cnblogs.py`：按标题删除重复文章（保留最新）
-- `deduplication.md`：原理与注意事项说明
+- `tools/deduplicate_cnblogs.py`：按标题删除重复文章（保留最新）
+- `docs/deduplication.md`：原理与注意事项说明
 
-当前主流程已通过发布记录与状态分支避免重复发布。
+当前主流程已通过发布记录避免重复发布。
 
 ## 常见问题
 
