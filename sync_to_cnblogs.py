@@ -829,7 +829,7 @@ if __name__ == "__main__":
     step4_status = "成功" if failed_count == 0 else "部分失败"
     set_status(step, step4_status, step4_detail)
 
-    if run_mode != "manual" and head_commit:
+    if run_mode != "manual" and head_commit and failed_count == 0:
         sync_state["last_synced_commit"] = head_commit
     sync_state["last_run_at"] = datetime.now().isoformat(timespec="seconds")
     sync_state["last_run_mode"] = run_mode
