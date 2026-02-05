@@ -43,7 +43,7 @@ python tools/deduplicate_cnblogs.py
    说明：
    - 本仓库是“同步脚本仓库”，`SYNC_REPO_URL` 指向待发布的 Markdown 仓库（HTTPS URL）
    - `SYNC_REPO_TOKEN` 用于私有仓库拉取/推送（HTTPS Token 或同等凭据）
-   - 若系统 pip 提示 externally-managed-environment（PEP 668），脚本会自动创建 `.venv` 安装依赖；也可设置 `USE_VENV=true` 或 `VENV_DIR` 自定义路径
+   - 若系统 pip 提示 externally-managed-environment（PEP 668），脚本会自动创建 `.venv` 安装依赖
    - 其他参数均使用默认值，无需配置
 2. 同步（首次运行会自动初始化发布记录）：
    ```bash
@@ -72,14 +72,11 @@ python scripts/run_sync_hourly.py
   - 若不存在：创建新文章并写入记录
 - 默认全量扫描并发布 Markdown 文件
 
-## 同步后自动去重（可选）
+## 同步后自动去重（默认执行）
 
-若你的历史文章超过 300 篇，为避免重复，可在每次同步完成后自动执行去重脚本：
+默认在每次同步完成后自动执行去重脚本，使用内置默认参数。
 
-- 在 `.env` 中设置 `POST_DEDUP=true`
-- 可选参数：`DEDUP_DRY_RUN`、`DEDUP_KEEP_LATEST`、`DEDUP_DELETE_DELAY`、`DEDUP_SHOW_DETAILS`、`DEDUP_MAX_ROUNDS`
-
-注意：去重会删除博客园上的重复文章，建议先设置 `DEDUP_DRY_RUN=true` 观察输出。
+注意：去重会删除博客园上的重复文章。
 
 ## 去重工具（历史）
 

@@ -26,11 +26,11 @@ from dotenv import load_dotenv
 
 # 支持直接执行和作为模块导入
 try:
-    from .common import logger, env_bool
+    from .common import logger
 except ImportError:
     # 直接执行时，添加 src 目录到路径
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from assemble_publish.common import logger, env_bool
+    from assemble_publish.common import logger
 
 
 class DailyLimitReached(Exception):

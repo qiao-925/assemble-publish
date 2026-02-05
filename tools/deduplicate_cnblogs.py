@@ -14,8 +14,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from dotenv import load_dotenv
 from assemble_publish.common import (
     logger,
-    env_bool,
-    env_int,
     env_str,
     get_sync_record_path,
     load_sync_record,
@@ -45,11 +43,11 @@ REPO_ROOT = Path.cwd().resolve()
 SYNC_RECORD_FILE = get_sync_record_path(REPO_ROOT)
 
 # --- 配置选项 ---
-KEEP_LATEST = env_bool("DEDUP_KEEP_LATEST", True)
-DRY_RUN = env_bool("DEDUP_DRY_RUN", False)
-SHOW_DETAILS = env_bool("DEDUP_SHOW_DETAILS", False)
-DELETE_DELAY = env_int("DEDUP_DELETE_DELAY", 0)
-MAX_ROUNDS = env_int("DEDUP_MAX_ROUNDS", 50)
+KEEP_LATEST = True
+DRY_RUN = False
+SHOW_DETAILS = False
+DELETE_DELAY = 0
+MAX_ROUNDS = 50
 
 
 def normalize_title(title):

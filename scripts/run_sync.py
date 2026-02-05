@@ -83,13 +83,6 @@ def run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = No
     )
 
 
-def env_flag(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def ensure_git() -> None:
     if shutil.which("git") is None:
         print("ERROR: git not found in PATH.")
@@ -200,13 +193,6 @@ def log_step_fail(step_index: int, error: str) -> None:
     print(f"❌ {title} 失败：{error}")
 
 
-def log_step_skip(step_index: int, detail: str | None = None) -> None:
-    title = RUN_STEPS[step_index - 1]
-    if detail:
-        print(f"⏭️ {title}：{detail}")
-    else:
-        print(f"⏭️ {title} 跳过")
-
 
 def main() -> int:
     load_env_defaults()
@@ -214,10 +200,7 @@ def main() -> int:
 
     step_status: list[str] = ["未开始"] * len(RUN_STEPS)
     python_exec = Path(sys.executable)
-    venv_dir = Path(os.getenv("VENV_DIR", str(REPO_ROOT / DEFAULT_VENV_DIR)))
-    use_venv = env_flag("USE_VENV", False)
-    if use_venv:
-        python_exec = ensure_venv(venv_dir)
+    venv_dir = REPO_ROOT / DEFAULT_VENV_DIR
     def set_status(step_index: int, status: str, detail: str | None = None) -> None:
         if detail:
             step_status[step_index - 1] = f"{status}：{detail}"
@@ -345,7 +328,7 @@ def main() -> int:
                 log_step_ok(step_index, detail)
                 set_status(step_index, "成功", detail)
             except subprocess.CalledProcessError as exc:
-                if not use_venv and is_pep668_error(exc):
+                if is_pep668_error(exc):
                     python_exec = ensure_venv(venv_dir)
                     run(
                         [str(python_exec), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(req_file)],
@@ -389,29 +372,13 @@ def main() -> int:
         # Step 5: post-sync dedup
         step_index = 5
         log_step_start(step_index)
-        if not env_flag("POST_DEDUP", False):
-            log_step_skip(step_index, "未启用 POST_DEDUP")
-            set_status(step_index, "跳过", "未启用 POST_DEDUP")
-        else:
-            dedup_script = REPO_ROOT / "tools" / "deduplicate_cnblogs.py"
-            if not dedup_script.is_file():
-                raise FileNotFoundError("未找到去重脚本：tools/deduplicate_cnblogs.py")
+        dedup_script = REPO_ROOT / "tools" / "deduplicate_cnblogs.py"
+        if not dedup_script.is_file():
+            raise FileNotFoundError("????????tools/deduplicate_cnblogs.py")
 
-            dedup_env = env.copy()
-            post_to_dedup = {
-                "POST_DEDUP_DRY_RUN": "DEDUP_DRY_RUN",
-                "POST_DEDUP_KEEP_LATEST": "DEDUP_KEEP_LATEST",
-                "POST_DEDUP_DELETE_DELAY": "DEDUP_DELETE_DELAY",
-                "POST_DEDUP_SHOW_DETAILS": "DEDUP_SHOW_DETAILS",
-                "POST_DEDUP_MAX_ROUNDS": "DEDUP_MAX_ROUNDS",
-            }
-            for src_key, dest_key in post_to_dedup.items():
-                if src_key in dedup_env:
-                    dedup_env.setdefault(dest_key, dedup_env[src_key])
-
-            run([str(python_exec), str(dedup_script)], cwd=workdir_path, env=dedup_env)
-            log_step_ok(step_index, "去重完成")
-            set_status(step_index, "成功", "去重完成")
+        run([str(python_exec), str(dedup_script)], cwd=workdir_path, env=env)
+        log_step_ok(step_index, "????")
+        set_status(step_index, "??", "????")
 
         print("\n✅ 全部步骤执行完成")
         print_summary()
