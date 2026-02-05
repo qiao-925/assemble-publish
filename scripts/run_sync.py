@@ -15,6 +15,7 @@ REPO_ROOT = SCRIPT_DIR.parent
 DEFAULT_SYNC_REPO_BRANCH = "main"
 DEFAULT_SYNC_REPO_DEPTH = 50
 DEFAULT_WORKDIR = Path(tempfile.gettempdir()) / "assemble-main-repo"
+DEFAULT_VENV_DIR = Path(".venv")
 INSTALL_DEPS = True
 RUN_STEPS = [
     "准备与校验配置",
@@ -141,6 +142,41 @@ def get_head_commit(cwd: Path, env: dict[str, str]) -> str | None:
         return None
 
 
+def is_pep668_error(exc: subprocess.CalledProcessError) -> bool:
+    text = ""
+    if getattr(exc, "stderr", None):
+        text += exc.stderr or ""
+    if getattr(exc, "stdout", None):
+        text += exc.stdout or ""
+    text = text.lower()
+    return "externally-managed-environment" in text or "pep 668" in text
+
+
+def venv_python_path(venv_dir: Path) -> Path:
+    if os.name == "nt":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
+def ensure_venv(venv_dir: Path) -> Path:
+    venv_dir = venv_dir.expanduser().absolute()
+    python_path = venv_python_path(venv_dir)
+    if python_path.is_file():
+        return python_path
+    try:
+        import venv as venv_module
+    except Exception as exc:
+        raise RuntimeError("未安装 python3-venv，无法创建虚拟环境") from exc
+    try:
+        builder = venv_module.EnvBuilder(with_pip=True)
+        builder.create(venv_dir)
+    except Exception as exc:
+        raise RuntimeError(f"无法创建虚拟环境：{venv_dir}") from exc
+    if not python_path.is_file():
+        raise RuntimeError(f"虚拟环境创建失败：{python_path} 不存在")
+    return python_path
+
+
 def log_plan() -> None:
     print("执行计划：")
     for i, title in enumerate(RUN_STEPS, 1):
@@ -177,6 +213,11 @@ def main() -> int:
     log_plan()
 
     step_status: list[str] = ["未开始"] * len(RUN_STEPS)
+    python_exec = Path(sys.executable)
+    venv_dir = Path(os.getenv("VENV_DIR", str(REPO_ROOT / DEFAULT_VENV_DIR)))
+    use_venv = env_flag("USE_VENV", False)
+    if use_venv:
+        python_exec = ensure_venv(venv_dir)
     def set_status(step_index: int, status: str, detail: str | None = None) -> None:
         if detail:
             step_status[step_index - 1] = f"{status}：{detail}"
@@ -294,12 +335,28 @@ def main() -> int:
             req_file = next((p for p in req_file_candidates if p.is_file()), None)
             if not req_file:
                 raise FileNotFoundError("requirements.txt not found")
-            run(
-                [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-r", str(req_file)],
-                env=env,
-            )
-            log_step_ok(step_index, "依赖已安装")
-            set_status(step_index, "成功", "依赖已安装")
+            try:
+                run(
+                    [str(python_exec), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(req_file)],
+                    env=env,
+                    capture=True,
+                )
+                detail = "依赖已安装（venv）" if python_exec != Path(sys.executable) else "依赖已安装"
+                log_step_ok(step_index, detail)
+                set_status(step_index, "成功", detail)
+            except subprocess.CalledProcessError as exc:
+                if not use_venv and is_pep668_error(exc):
+                    python_exec = ensure_venv(venv_dir)
+                    run(
+                        [str(python_exec), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(req_file)],
+                        env=env,
+                        capture=True,
+                    )
+                    detail = f"依赖已安装（venv: {venv_dir}）"
+                    log_step_ok(step_index, detail)
+                    set_status(step_index, "成功", detail)
+                else:
+                    raise
         else:
             log_step_ok(step_index, "跳过安装依赖")
             set_status(step_index, "跳过", "跳过安装依赖")
@@ -323,7 +380,7 @@ def main() -> int:
         sync_script = next((p for p in sync_script_candidates if p.is_file()), None)
         if not sync_script:
             raise FileNotFoundError("未找到同步脚本：sync_to_cnblogs.py")
-        run([sys.executable, str(sync_script), *args], cwd=workdir_path, env=env)
+        run([str(python_exec), str(sync_script), *args], cwd=workdir_path, env=env)
         args_display = " ".join(args) if args else "(无)"
         sync_detail = f"参数={args_display}"
         log_step_ok(step_index, sync_detail)
@@ -352,7 +409,7 @@ def main() -> int:
                 if src_key in dedup_env:
                     dedup_env.setdefault(dest_key, dedup_env[src_key])
 
-            run([sys.executable, str(dedup_script)], cwd=workdir_path, env=dedup_env)
+            run([str(python_exec), str(dedup_script)], cwd=workdir_path, env=dedup_env)
             log_step_ok(step_index, "去重完成")
             set_status(step_index, "成功", "去重完成")
 

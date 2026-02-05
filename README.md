@@ -43,6 +43,7 @@ python tools/deduplicate_cnblogs.py
    说明：
    - 本仓库是“同步脚本仓库”，`SYNC_REPO_URL` 指向待发布的 Markdown 仓库（HTTPS URL）
    - `SYNC_REPO_TOKEN` 用于私有仓库拉取/推送（HTTPS Token 或同等凭据）
+   - 若系统 pip 提示 externally-managed-environment（PEP 668），脚本会自动创建 `.venv` 安装依赖；也可设置 `USE_VENV=true` 或 `VENV_DIR` 自定义路径
    - 其他参数均使用默认值，无需配置
 2. 同步（首次运行会自动初始化发布记录）：
    ```bash
