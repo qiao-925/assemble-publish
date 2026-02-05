@@ -4,6 +4,10 @@ RUN apk add --no-cache git ca-certificates
 
 WORKDIR /app
 
+# 将临时目录指向可挂载的大空间卷；容器启动时可用 -v /host/bigdisk:/data 覆盖
+ENV TMPDIR=/data/assemble-tmp
+RUN mkdir -p "$TMPDIR" && chmod 777 "$TMPDIR"
+
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
