@@ -70,7 +70,7 @@ python scripts/run_sync_hourly.py
 - 发布时：
   - 若标题存在于发布记录中：根据 `FORCE_OVERWRITE_EXISTING` 决定更新或跳过
   - 若不存在：创建新文章并写入记录
-- 默认全量扫描并发布 Markdown 文件
+- 默认全量扫描并发布 Markdown 文件（按修改时间倒序，最新优先）
 
 ## 同步后自动去重（默认执行）
 

@@ -110,7 +110,7 @@ def find_all_markdown_files(root_dir=None):
         root_dir = REPO_ROOT
 
     root_path = Path(root_dir).resolve()
-    md_files = []
+    md_files: list[Path] = []
 
     logger.info(f"🔍 开始扫描 Markdown 文件（从 {root_path} 开始）...")
 
@@ -121,11 +121,17 @@ def find_all_markdown_files(root_dir=None):
         if any(part in EXCLUDE_DIRS for part in path_parts):
             continue
 
-        md_files.append(str(file_path))
+        md_files.append(file_path)
 
-    md_files.sort()
-    logger.info(f"✅ 找到 {len(md_files)} 个 Markdown 文件")
-    return md_files
+    def file_mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    md_files.sort(key=lambda path: (file_mtime(path), str(path)), reverse=True)
+    logger.info(f"✅ 找到 {len(md_files)} 个 Markdown 文件（按修改时间倒序）")
+    return [str(path) for path in md_files]
 
 def get_file_content(filepath):
     """读取文件内容"""
