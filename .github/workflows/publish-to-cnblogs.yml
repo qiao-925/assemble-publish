@@ -2,7 +2,7 @@ name: Publish to Cnblogs
 
 on:
   schedule:
-    - cron: '0 0,12 * * *'  # 每天 00:00 和 12:00 运行
+    - cron: '0 0,12 * * *'  # 每天 00:00 �?12:00 运行
   workflow_dispatch:          # 允许手动触发
 
 jobs:
@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v3
         with:
           repository: qiao-925/assemble-publish
-          token: ${{ secrets.ASSEMBLE_PUBLISH_PAT }}
+          token: \$\{\{ secrets.ASSEMBLE_OUTPUT_PAT \}\}
 
       - name: Set up Python
         uses: actions/setup-python@v4
