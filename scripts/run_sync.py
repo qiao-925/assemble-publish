@@ -7,11 +7,11 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from urllib.parse import quote, urlparse, urlunparse
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
+DEFAULT_SYNC_REPO_URL = "https://github.com/qiao-925/assemble-archive"
 DEFAULT_SYNC_REPO_BRANCH = "main"
 DEFAULT_SYNC_REPO_DEPTH = 50
 DEFAULT_WORKDIR = Path(tempfile.gettempdir()) / "assemble-main-repo"
@@ -89,34 +89,6 @@ def ensure_git() -> None:
         sys.exit(1)
 
 
-def build_repo_url(base_url: str, token: str) -> str:
-    try:
-        parsed = urlparse(base_url)
-    except Exception:
-        return base_url
-
-    if parsed.scheme not in {"http", "https"}:
-        return base_url
-
-    if parsed.username or parsed.password:
-        return base_url
-
-    safe_token = quote(token, safe="")
-    netloc = f"{safe_token}@{parsed.netloc}"
-    return urlunparse(parsed._replace(netloc=netloc))
-
-
-def sanitize_url(url: str) -> str:
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return url
-    if not parsed.username and not parsed.password:
-        return url
-    host = parsed.hostname or parsed.netloc.split("@")[-1]
-    if parsed.port:
-        host = f"{host}:{parsed.port}"
-    return urlunparse(parsed._replace(netloc=host))
 
 def short_commit(commit: str | None) -> str:
     if not commit:
@@ -217,26 +189,13 @@ def main() -> int:
         # Step 1: prepare
         step_index = 1
         log_step_start(step_index)
-        sync_repo_url = os.getenv("SYNC_REPO_URL")
-        sync_repo_token = os.getenv("SYNC_REPO_TOKEN")
-        if not sync_repo_url:
-            log_step_fail(step_index, "缺少 SYNC_REPO_URL")
-            set_status(step_index, "失败", "缺少 SYNC_REPO_URL")
-            print_summary()
-            return 1
-        if not sync_repo_token:
-            log_step_fail(step_index, "缺少 SYNC_REPO_TOKEN")
-            set_status(step_index, "失败", "缺少 SYNC_REPO_TOKEN")
-            print_summary()
-            return 1
-
+        sync_repo_url = DEFAULT_SYNC_REPO_URL
         sync_repo_branch = DEFAULT_SYNC_REPO_BRANCH
         sync_repo_depth = DEFAULT_SYNC_REPO_DEPTH
-        workdir = str(DEFAULT_WORKDIR)
 
-        workdir_path = Path(workdir).expanduser().absolute()
-        if is_unsafe_workdir(workdir, workdir_path):
-            log_step_fail(step_index, f"WORKDIR 非法：{workdir}")
+        workdir_path = DEFAULT_WORKDIR.expanduser().absolute()
+        if is_unsafe_workdir(str(DEFAULT_WORKDIR), workdir_path):
+            log_step_fail(step_index, f"WORKDIR 非法：{workdir_path}")
             set_status(step_index, "失败", "WORKDIR 非法")
             print_summary()
             return 1
@@ -245,13 +204,9 @@ def main() -> int:
 
         env = os.environ.copy()
         env.setdefault("GIT_TERMINAL_PROMPT", "0")
-        env.setdefault("SYNC_REPO_URL", sync_repo_url)
-        env.setdefault("SYNC_REPO_TOKEN", sync_repo_token)
 
-        remote_url = build_repo_url(sync_repo_url, sync_repo_token)
-        safe_url = sanitize_url(sync_repo_url)
         depth_label = "全量" if sync_repo_depth == 0 else f"深度={sync_repo_depth}"
-        prepare_detail = f"仓库={safe_url} 分支={sync_repo_branch} {depth_label} 工作区={workdir_path}"
+        prepare_detail = f"仓库={sync_repo_url} 分支={sync_repo_branch} {depth_label} 工作区={workdir_path}"
         log_step_ok(step_index, prepare_detail)
         set_status(step_index, "成功", prepare_detail)
 
@@ -262,9 +217,9 @@ def main() -> int:
             print(f"  - 已存在工作区，执行更新：{workdir_path}")
             try:
                 run(["git", "remote", "get-url", "origin"], cwd=workdir_path, env=env, capture=True)
-                run(["git", "remote", "set-url", "origin", remote_url], cwd=workdir_path, env=env)
+                run(["git", "remote", "set-url", "origin", sync_repo_url], cwd=workdir_path, env=env)
             except subprocess.CalledProcessError:
-                run(["git", "remote", "add", "origin", remote_url], cwd=workdir_path, env=env)
+                run(["git", "remote", "add", "origin", sync_repo_url], cwd=workdir_path, env=env)
 
             if sync_repo_depth != 0:
                 run(
@@ -300,7 +255,7 @@ def main() -> int:
             clone_args = ["git", "clone", "--branch", sync_repo_branch]
             if sync_repo_depth != 0:
                 clone_args += ["--depth", str(sync_repo_depth)]
-            clone_args += [remote_url, str(workdir_path)]
+            clone_args += [sync_repo_url, str(workdir_path)]
             run(clone_args, env=env)
             head_commit = short_commit(get_head_commit(workdir_path, env))
             clone_detail = f"方式=克隆 HEAD={head_commit}"

@@ -37,12 +37,10 @@ python tools/deduplicate_cnblogs.py
    CNBLOGS_RPC_URL=
    CNBLOGS_USERNAME=
    CNBLOGS_TOKEN=
-   SYNC_REPO_URL=
-   SYNC_REPO_TOKEN=
    ```
    说明：
-   - 本仓库是“同步脚本仓库”，`SYNC_REPO_URL` 指向待发布的 Markdown 仓库（HTTPS URL）
-   - `SYNC_REPO_TOKEN` 用于私有仓库拉取/推送（HTTPS Token 或同等凭据）
+   - 数据源仓库（`assemble-archive`）地址已硬编码在 `scripts/run_sync.py` 中，无需配置
+   - `assemble-archive` 是公开仓库，无需 Token 即可拉取
    - 若系统 pip 提示 externally-managed-environment（PEP 668），脚本会自动创建 `.venv` 安装依赖
    - 其他参数均使用默认值，无需配置
 2. 同步（首次运行会自动初始化发布记录）：
@@ -91,8 +89,8 @@ python scripts/run_sync_hourly.py
 
 - **没有发布记录会怎样？**
   脚本会自动初始化发布记录后继续同步。
-- **私有仓库如何拉取？**
-  默认示例使用公共仓库；私有仓库需提前配置 Git 凭据（HTTPS Token 或 SSH），否则无法拉取/推送。
+- **数据源仓库在哪里配置？**
+  硬编码在 `scripts/run_sync.py` 的 `DEFAULT_SYNC_REPO_URL` 常量中，默认指向 `qiao-925/assemble-archive`（公开仓库）。
 
 ---
 
