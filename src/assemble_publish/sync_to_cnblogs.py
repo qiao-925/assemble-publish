@@ -133,6 +133,38 @@ def find_all_markdown_files(root_dir=None):
     logger.info(f"✅ 找到 {len(md_files)} 个 Markdown 文件（按修改时间倒序）")
     return [str(path) for path in md_files]
 
+
+def find_archive_files(root_dir=None):
+    """扫描 assemble-archive 结构，返回 daily/<date>/*.md 文件（按日期倒序）"""
+    if root_dir is None:
+        root_dir = REPO_ROOT
+
+    root_path = Path(root_dir).resolve()
+    daily_dir = root_path / "daily"
+
+    if not daily_dir.is_dir():
+        logger.warning(f"⚠️ daily 目录不存在：{daily_dir}")
+        return []
+
+    md_files: list[tuple[str, Path]] = []  # (date_str, path)
+    for date_dir in sorted(daily_dir.iterdir(), reverse=True):
+        if not date_dir.is_dir():
+            continue
+        for md_file in sorted(date_dir.glob("*.md")):
+            md_files.append((date_dir.name, md_file))
+
+    logger.info(f"🔍 扫描 archive 结构，找到 {len(md_files)} 篇文章")
+    return md_files
+
+
+def extract_title_from_content(content: str, fallback: str = "Untitled") -> str:
+    """从 Markdown 内容的第一个 # 标题行提取标题，失败则用 fallback"""
+    for line in content.splitlines():
+        line = line.strip()
+        if line.startswith("# "):
+            return line[2:].strip()
+    return fallback
+
 def get_file_content(filepath):
     """读取文件内容"""
     with open(filepath, 'r', encoding='utf-8') as f:
@@ -312,18 +344,27 @@ if __name__ == "__main__":
     step = 3
     log_step_start(step)
     run_mode = "full"
+    archive_entries = []  # list of (date_str, path) for archive mode
     if len(sys.argv) > 1:
         files_to_publish = sys.argv[1:]
         logger.info(f"  - 手动模式：指定 {len(files_to_publish)} 个文件")
         run_mode = "manual"
     else:
-        files_to_publish = find_all_markdown_files()
-        if not files_to_publish:
-            log_step_ok(step, "未找到 Markdown 文件")
-            set_status(step, "跳过", "未找到 Markdown 文件")
-            print_summary()
-            sys.exit(0)
-        logger.info(f"  - 全量扫描：共 {len(files_to_publish)} 个 Markdown 文件")
+        # 优先使用 archive 模式（daily/<date>/post.md）
+        archive_entries = find_archive_files()
+        if archive_entries:
+            files_to_publish = [str(p) for _, p in archive_entries]
+            run_mode = "archive"
+            logger.info(f"  - archive 模式：共 {len(files_to_publish)} 个 daily post")
+        else:
+            # fallback: 全量扫描（兼容旧仓库）
+            files_to_publish = find_all_markdown_files()
+            if not files_to_publish:
+                log_step_ok(step, "未找到 Markdown 文件")
+                set_status(step, "跳过", "未找到 Markdown 文件")
+                print_summary()
+                sys.exit(0)
+            logger.info(f"  - 全量扫描：共 {len(files_to_publish)} 个 Markdown 文件")
 
     list_detail = f"模式={run_mode}，候选={len(files_to_publish)}"
     log_step_ok(step, list_detail)
@@ -353,8 +394,13 @@ if __name__ == "__main__":
             continue
 
         logger.info(f"[{idx}/{len(files_to_publish)}] 处理文件: {md_file}")
-        post_title = os.path.basename(md_file).replace('.md', '')
         post_content = get_file_content(md_file)
+
+        if run_mode == "archive" and archive_entries:
+            filename_title = os.path.basename(md_file).replace('.md', '')
+            post_title = extract_title_from_content(post_content, fallback=filename_title)
+        else:
+            post_title = os.path.basename(md_file).replace('.md', '')
 
         try:
             result = post_to_cnblogs(post_title, post_content)
