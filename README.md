@@ -7,7 +7,7 @@
 ## 架构位置
 
 ```
-qiao-925/Assemble
+qiao-925/assemble-processing
     └─ push assemble-archive/ 变更
           ↓
 qiao-925/assemble-archive
@@ -18,7 +18,7 @@ qiao-925/assemble-archive
              博客园
 ```
 
-完整架构见 `Assemble/ASSEMBLE_WORKFLOW.md`。
+完整架构见 `assemble-processing/ASSEMBLE_WORKFLOW.md`。
 
 ## 目录结构
 
