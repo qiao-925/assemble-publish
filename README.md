@@ -1,97 +1,75 @@
-﻿# assemble-publish
+# assemble-publish
 
-## 命令清单
+博客园发布脚本库。将 Markdown 内容同步发布到博客园（MetaWeblog API）。
+
+> **当前定位**：本仓库是**脚本库**，主要被 `qiao-925/assemble-archive` 的 GitHub Actions workflow 引用执行。也支持本地手动运行。
+
+## 架构位置
+
+```
+qiao-925/Assemble
+    └─ push assemble-archive/ 变更
+          ↓
+qiao-925/assemble-archive
+    └─ GitHub Actions workflow 触发
+          ├─ checkout 本仓库到 _publish/
+          └─ python _publish/src/assemble_publish/sync_to_cnblogs.py
+                ↓
+             博客园
+```
+
+完整架构见 `Assemble/ASSEMBLE_WORKFLOW.md`。
+
+## 目录结构
+
+```
+assemble-publish/
+├── src/assemble_publish/
+│   ├── sync_to_cnblogs.py    # 核心发布脚本（被 workflow 直接调用）
+│   └── common.py             # 通用工具
+├── scripts/
+│   └── run_sync.py            # 本地手动同步入口（克隆 archive 仓库 + 调用 sync）
+├── tools/
+│   └── deduplicate_cnblogs.py # 博客园去重工具（手动运行）
+└── .env.example
+```
+
+## 本地使用（可选）
+
+大多数情况下不需要本地运行，由 `assemble-archive` 的 workflow 自动执行。
+如需本地调试或手动补发：
 
 ```bash
-# 初始化环境变量文件
+# 1. 准备环境变量
 cp .env.example .env
+# 编辑 .env，填入 CNBLOGS_RPC_URL / CNBLOGS_USERNAME / CNBLOGS_TOKEN
 
-# 本地执行同步（推荐入口）
+# 2. 运行
 python scripts/run_sync.py
-
-# 常驻定时同步（每日 00:00 / 12:00）
-python scripts/run_sync_hourly.py
-
-# 去重工具（历史/手动运行）
-python tools/deduplicate_cnblogs.py
 ```
 
-将 Markdown 仓库内容同步发布到博客园（MetaWeblog API）。
+`run_sync.py` 会：
+1. 克隆 `qiao-925/assemble-archive` 到本地临时目录
+2. 调用 `sync_to_cnblogs.py` 扫描 `daily/<date>/*.md` 并发布
 
-本仓库提供同步脚本与部署入口：可本地执行，也可在容器/定时任务中自动拉取目标 Markdown 仓库并发布。
+## 运行机制
 
-## 功能特性
+`sync_to_cnblogs.py` 是**无状态**的：
+- 每次运行从博客园 API 拉取最近 300 篇文章作为"已发布"快照
+- 按标题匹配：
+  - 已存在 → 根据 `FORCE_OVERWRITE_EXISTING` 决定覆盖或跳过（默认覆盖）
+  - 不存在 → 创建新文章
+- 扫描目标：仓库根目录下的 `daily/<date>/*.md`（按日期倒序）
 
-- 单向同步：目标 Markdown 仓库 → 博客园
-- 去重与更新：基于本地发布记录判断是否已发布，支持强制覆盖更新
-- 自动处理：将文内本地 `.md` 链接替换为博客园站内搜索链接
+## 环境变量
 
-## 快速开始（本地执行，推荐用 scripts/run_sync.py）
+| 变量 | 说明 | 必填 |
+|---|---|---|
+| `CNBLOGS_RPC_URL` | 博客园 MetaWeblog RPC 地址 | ✅ |
+| `CNBLOGS_USERNAME` | 博客园用户名 | ✅ |
+| `CNBLOGS_TOKEN` | 博客园 Token（从博客园后台获取） | ✅ |
 
-1. 准备环境变量（复制并修改）：
-   ```bash
-   cp .env.example .env
-   ```
-   最小可用配置（与 `.env.example` 一致）：
-   ```bash
-   CNBLOGS_RPC_URL=
-   CNBLOGS_USERNAME=
-   CNBLOGS_TOKEN=
-   ```
-   说明：
-   - 数据源仓库（`assemble-archive`）地址已硬编码在 `scripts/run_sync.py` 中，无需配置
-   - `assemble-archive` 是公开仓库，无需 Token 即可拉取
-   - 若系统 pip 提示 externally-managed-environment（PEP 668），脚本会自动创建 `.venv` 安装依赖
-   - 其他参数均使用默认值，无需配置
-2. 同步（首次运行会自动初始化发布记录）：
-   ```bash
-   python scripts/run_sync.py
-   ```
+## 工具
 
-## 定时同步（每日两次，部署场景）
-
-该脚本适合部署为**常驻进程/容器**：不依赖外部 Cron，等待到下一个定点触发同步并循环。
-部署启动后会**立即先跑一次**，随后在**每天 00:00 与 12:00**触发。
-
-```bash
-python scripts/run_sync_hourly.py
-```
-
-部署建议：
-- 将 `scripts/run_sync_hourly.py` 作为服务启动命令（systemd / supervisor / 容器 CMD/ENTRYPOINT），保持进程常驻
-- 若平台自带 Cron/定时任务，建议直接定时执行 `python scripts/run_sync.py`（例如每天 00:00/12:00）而无需常驻
-- 触发时间按**部署机系统时区**计算，如需调整请在部署环境配置时区
-
-## 运行机制简述
-
-- 首次运行会自动从博客园 API 拉取最近 300 篇文章并生成本地发布记录
-- 发布时：
-  - 若标题存在于发布记录中：根据 `FORCE_OVERWRITE_EXISTING` 决定更新或跳过
-  - 若不存在：创建新文章并写入记录
-- 默认全量扫描并发布 Markdown 文件（按修改时间倒序，最新优先）
-
-## 同步后自动去重（默认执行）
-
-默认在每次同步完成后自动执行去重脚本，使用内置默认参数。
-
-注意：去重会删除博客园上的重复文章。
-
-## 去重工具（历史）
-
-如需处理历史遗留的重复文章，可使用去重工具：
-
-- `tools/deduplicate_cnblogs.py`：按标题删除重复文章（保留最新）
-- `docs/deduplication.md`：原理与注意事项说明
-
-当前主流程已通过发布记录避免重复发布。
-
-## 常见问题
-
-- **没有发布记录会怎样？**
-  脚本会自动初始化发布记录后继续同步。
-- **数据源仓库在哪里配置？**
-  硬编码在 `scripts/run_sync.py` 的 `DEFAULT_SYNC_REPO_URL` 常量中，默认指向 `qiao-925/assemble-archive`（公开仓库）。
-
----
-
-如需调整行为，请优先修改 `.env.example` 并同步到部署环境。
+- `tools/deduplicate_cnblogs.py`：按标题删除博客园上的重复文章（保留最新）
+- `docs/deduplication.md`：去重原理说明
